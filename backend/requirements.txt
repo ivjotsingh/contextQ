@@ -1,0 +1,30 @@
+# ContextQ Backend Dependencies
+# Generated from pyproject.toml for Docker compatibility
+
+# Web Framework
+fastapi[standard]>=0.115.0
+uvicorn[standard]>=0.32.0
+python-multipart>=0.0.18
+
+# Data Validation
+pydantic>=2.10.0
+pydantic-settings>=2.6.0
+
+# LLM & Embeddings
+anthropic>=0.40.0
+voyageai>=0.2.0
+
+# Vector Database
+qdrant-client>=1.12.0
+
+# Caching
+redis>=5.2.0
+
+# Document Parsing
+pymupdf>=1.25.0
+python-docx>=1.1.0
+
+# Utilities
+python-dotenv>=1.0.0
+httpx>=0.28.0
+
