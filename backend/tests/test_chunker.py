@@ -2,7 +2,7 @@
 
 import pytest
 
-from app.services.chunker import ChunkerService, TextChunk
+from services.chunker import ChunkerService, TextChunk
 
 
 class TestChunkerService:
@@ -160,4 +160,3 @@ class TestTextChunk:
         )
 
         assert chunk.page_number is None
-

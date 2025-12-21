@@ -1,12 +1,11 @@
 """Tests for the document parsing service."""
 
-import hashlib
 import os
 import tempfile
 
 import pytest
 
-from app.services.document import (
+from services.document import (
     DocumentService,
     EmptyDocumentError,
     FileTooLargeError,
@@ -117,9 +116,7 @@ class TestDocumentService:
     async def test_parse_txt_file(self):
         """Test parsing plain text file."""
         # Create temp file
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".txt", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
             f.write("This is test content.\n\nSecond paragraph.")
             temp_path = f.name
 
@@ -136,9 +133,7 @@ class TestDocumentService:
     @pytest.mark.asyncio
     async def test_parse_empty_txt_file(self):
         """Test parsing empty text file raises error."""
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".txt", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
             f.write("")
             temp_path = f.name
 
@@ -151,9 +146,7 @@ class TestDocumentService:
     @pytest.mark.asyncio
     async def test_parse_whitespace_txt_file(self):
         """Test parsing whitespace-only file raises error."""
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".txt", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
             f.write("   \n\n   ")
             temp_path = f.name
 
@@ -172,4 +165,3 @@ class TestDocumentService:
         assert "\n\n\n" not in result
         # Multiple spaces reduced to single
         assert "   " not in result
-

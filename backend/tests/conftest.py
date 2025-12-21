@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-# Add app to path
+# Add backend to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 
@@ -135,4 +135,3 @@ def sample_chunks():
             "page_number": 2,
         },
     ]
-

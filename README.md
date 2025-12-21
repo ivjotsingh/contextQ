@@ -30,6 +30,10 @@ ContextQ is a RAG (Retrieval-Augmented Generation) powered application that enab
 - 📚 **Source attribution** - Every answer cites its sources
 - ⚡ **Smart caching** - Fast responses for repeated queries
 - 🔒 **Privacy-focused** - Session-based, no persistent user data
+- 🧠 **Query decomposition** - Complex multi-document queries are split into sub-queries for better retrieval
+- 📝 **Conversation summarization** - Long chats are summarized to manage context window efficiently
+- 🔄 **Duplicate detection** - Content hashing prevents re-processing identical documents
+- 🎯 **Smart query routing** - General questions (greetings, help) skip RAG for faster response
 
 ## Architecture
 
@@ -109,8 +113,8 @@ source .venv/bin/activate  # Windows: .venv\Scripts\activate
 uv pip install -r requirements.txt
 
 # Run development server
-uvicorn app.main:app --reload --port 8000
-# Or with uv: uv run uvicorn app.main:app --reload --port 8000
+uvicorn main:app --reload --port 8000
+# Or with uv: uv run uvicorn main:app --reload --port 8000
 ```
 
 ### 3. Frontend Setup
@@ -215,27 +219,133 @@ The system prompt includes:
 ## Project Structure
 
 ```
-contextq/
-├── backend/
-│   ├── app/
-│   │   ├── api/           # API routes & schemas
-│   │   ├── services/      # Business logic
-│   │   ├── utils/         # Helpers
-│   │   ├── config.py      # Settings
-│   │   ├── main.py        # FastAPI app
-│   │   └── responses.py   # Response models
-│   ├── tests/             # Unit & integration tests
-│   └── requirements.txt
-├── frontend/
-│   ├── src/
-│   │   ├── components/    # React components
-│   │   ├── hooks/         # Custom hooks
-│   │   └── styles/        # Tailwind CSS
-│   └── package.json
-├── Dockerfile             # Multi-stage build
-├── .env.example           # Environment template
-└── README.md
+backend/
+├── main.py                      # FastAPI app entry point
+├── config.py                    # Settings & configuration
+├── responses.py                 # Response codes, formats & helpers
+├── router.py                    # Main router aggregator
+├── utils.py                     # Helper utilities
+│
+├── llm/                         # LLM abstraction layer
+│   ├── __init__.py              # exports get_model()
+│   ├── base.py                  # BaseLLM abstract class
+│   ├── claude.py                # Claude implementation (current)
+│   └── prompts.py               # System prompts (RAG, general, summarization)
+│
+├── chat/                        # Chat domain
+│   ├── handlers/
+│   │   ├── send_message.py      # POST /chat/stream (streaming, with non-streaming fallback)
+│   │   ├── get_chat_history.py  # GET /chat/history
+│   │   └── clear_chat_history.py # DELETE /chat/history
+│   └── models/
+│       └── message.py           # Firestore: sessions/{id}/messages
+│
+├── documents/                   # Documents domain
+│   └── handlers/
+│       ├── upload_document.py   # POST /documents/upload
+│       ├── list_documents.py    # GET /documents
+│       └── delete_document.py   # DELETE /documents/{doc_id}
+│
+├── sessions/                    # Sessions domain
+│   ├── helpers.py               # get_or_create_session, set_session_cookie
+│   ├── handlers/
+│   │   ├── list_sessions.py     # GET /sessions
+│   │   ├── create_session.py    # POST /sessions
+│   │   ├── switch_session.py    # PUT /sessions/{id}/switch
+│   │   └── delete_session.py    # DELETE /sessions/{id}
+│   └── models/
+│       └── session.py           # Firestore: sessions collection
+│
+├── health/                      # Health check domain
+│   └── handlers/
+│       └── health_check.py      # GET /health
+│
+├── services/                    # Core business logic (see below)
+│   ├── document.py
+│   ├── chunker.py
+│   ├── embeddings.py
+│   ├── vector_store.py
+│   ├── query_analyzer.py
+│   └── rag.py
+│
+├── db/                          # Database layer
+│   └── firestore.py             # Firestore singleton service
+│
+├── cache/                       # Cache layer
+│   └── redis.py                 # Redis singleton service
+│
+├── scripts/
+│   └── reset_qdrant.py          # Reset Qdrant collection
+│
+└── tests/
+    ├── test_chunker.py
+    └── test_document.py
+
+frontend/
+├── src/
+│   ├── components/              # React components
+│   ├── hooks/                   # Custom hooks
+│   └── styles/                  # Tailwind CSS
+└── package.json
 ```
+
+### Why `services/` exists
+
+The `services/` folder contains **domain-agnostic business logic** that doesn't belong to any specific API domain:
+
+| Service | Purpose | Why not in a domain folder? |
+|---------|---------|----------------------------|
+| `document.py` | Parse PDF/DOCX/TXT files | Used by documents, but parsing logic is independent |
+| `chunker.py` | Split text into overlapping chunks | Pure text processing, no API/DB dependencies |
+| `embeddings.py` | Generate vectors via Voyage AI | External API wrapper, used by RAG |
+| `vector_store.py` | Qdrant CRUD operations | Database layer for vectors |
+| `query_analyzer.py` | Decompose complex queries | LLM-powered analysis, used by RAG |
+| `rag.py` | Orchestrate retrieval + generation | Composes all services together |
+
+**Rule of thumb**: If it's reusable across domains or has no HTTP context, it belongs in `services/`.
+
+### LLM Module
+
+Currently uses **Claude only** via direct Anthropic SDK. The `llm/` module provides a simple abstraction:
+
+```python
+from llm import get_model
+
+model = get_model("claude-sonnet-4-20250514")  # or any Claude model
+response = await model.generate(prompt, system_prompt)
+stream = model.stream(prompt, system_prompt)
+```
+
+**Future**: If multiple providers are needed (OpenAI, Gemini, etc.), we'd integrate LangChain here. For now, direct SDK is simpler and has fewer dependencies.
+
+## Testing
+
+### Running Tests
+
+```bash
+cd backend
+
+# Install test dependencies
+uv pip install pytest pytest-asyncio pytest-cov
+
+# Run all tests
+pytest -v
+
+# Run with coverage
+pytest --cov=. --cov-report=html
+
+# Run specific test file
+pytest tests/test_chunker.py -v
+```
+
+### Test Coverage
+
+| Test File | What it covers |
+|-----------|----------------|
+| `test_chunker.py` | Text chunking: empty text, short text, long text, overlap, sentence/paragraph breaks, page estimation |
+| `test_document.py` | Document parsing: filename sanitization, file validation, content hashing, TXT parsing, error handling |
+
+**Note**: Tests for `chunker.py` and `document.py` don't require external services (no API keys needed). They test pure business logic.
 
 ## Future Improvements
 
@@ -262,17 +372,6 @@ contextq/
 - [ ] Rate limiting with slowapi
 - [ ] Usage analytics and monitoring
 - [ ] Document versioning
-
-## Testing
-
-```bash
-# Backend tests
-cd backend
-pytest -v
-
-# With coverage
-pytest --cov=app --cov-report=html
-```
 
 ## Contributing
 
