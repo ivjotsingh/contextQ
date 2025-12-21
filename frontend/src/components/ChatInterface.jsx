@@ -1,10 +1,11 @@
 import { useState, useRef, useEffect } from 'react';
-import { Send, Square, Sparkles } from 'lucide-react';
+import { Send, Square, Sparkles, Loader2 } from 'lucide-react';
 import MessageBubble from './MessageBubble';
 
 export function ChatInterface({ 
   messages, 
-  isLoading, 
+  isLoading,
+  isLoadingHistory,
   onSendMessage, 
   onCancelRequest,
   hasDocuments 
@@ -42,7 +43,12 @@ export function ChatInterface({
     <div className="flex flex-col h-full">
       {/* Messages area */}
       <div className="flex-1 overflow-y-auto px-4 py-6 space-y-6 scrollbar-hide">
-        {messages.length === 0 ? (
+        {isLoadingHistory ? (
+          <div className="flex flex-col items-center justify-center h-full">
+            <Loader2 className="w-8 h-8 text-sky-400 animate-spin mb-3" />
+            <p className="text-sm text-gray-500">Loading chat history...</p>
+          </div>
+        ) : messages.length === 0 ? (
           <EmptyState hasDocuments={hasDocuments} />
         ) : (
           messages.map((message) => (

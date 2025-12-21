@@ -13,6 +13,7 @@ Before you start, make sure you have:
   - Voyage AI (Embeddings) - [Get here](https://www.voyageai.com/) - **Free tier: 200M tokens**
   - Qdrant Cloud - [Get here](https://cloud.qdrant.io/) - **Free tier: 1GB**
   - Upstash Redis - [Get here](https://upstash.com/) - **Free tier: 10K commands/day**
+  - Firebase (Firestore) - [Get here](https://console.firebase.google.com/) - **Free tier: 1GB storage, 50K reads/day**
 
 ## Step 1: Clone & Setup Environment
 
@@ -35,9 +36,16 @@ VOYAGE_API_KEY=your-voyage-api-key-here
 QDRANT_URL=https://your-cluster.qdrant.io
 QDRANT_API_KEY=your-qdrant-key-here
 REDIS_URL=redis://default:your-password@your-redis.upstash.io:6379
+FIREBASE_CREDENTIALS='{"type":"service_account","project_id":"your-project",...}'
 ENVIRONMENT=development
 DEBUG=false
 ```
+
+**Note**: For Firebase credentials:
+1. Go to Firebase Console > Project Settings > Service Accounts
+2. Click "Generate New Private Key" to download the JSON file
+3. Copy the entire JSON content and paste it as a single-line string in `FIREBASE_CREDENTIALS`
+4. Make sure to wrap it in single quotes in your `.env` file
 
 ## Step 2: Setup Backend
 

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { 
   FileText, 
   MessageSquare, 
@@ -10,24 +10,29 @@ import {
   ExternalLink,
   ChevronLeft,
   Settings,
-  HelpCircle
+  HelpCircle,
+  MessagesSquare
 } from 'lucide-react';
 import { useChat } from './hooks/useChat';
 import { useDocuments } from './hooks/useDocuments';
+import { useSessions } from './hooks/useSessions';
 import ChatInterface from './components/ChatInterface';
 import FileUpload from './components/FileUpload';
 import DocumentList from './components/DocumentList';
+import SessionList from './components/SessionList';
 
 function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [activeTab, setActiveTab] = useState('documents'); // 'documents' | 'upload'
+  const [activeTab, setActiveTab] = useState('chats'); // 'chats' | 'documents' | 'upload'
   
   const { 
     messages, 
-    isLoading: isChatLoading, 
+    isLoading: isChatLoading,
+    isLoadingHistory,
     sendMessage, 
     cancelRequest,
-    clearMessages 
+    clearMessages,
+    reloadHistory,
   } = useChat();
   
   const {
@@ -39,7 +44,40 @@ function App() {
     deleteDocument,
   } = useDocuments();
 
+  const {
+    sessions,
+    currentSessionId,
+    isLoading: isSessionsLoading,
+    createSession,
+    switchSession,
+    deleteSession,
+    refreshSessions,
+  } = useSessions();
+
   const hasDocuments = documents.length > 0;
+
+  // Handle session switch - reload chat history
+  const handleSwitchSession = async (sessionId) => {
+    const success = await switchSession(sessionId);
+    if (success) {
+      // Reload chat history for new session
+      await reloadHistory();
+    }
+  };
+
+  // Handle new session creation
+  const handleCreateSession = async () => {
+    await createSession();
+    // Clear local messages for new session
+    clearMessages(false); // Don't delete from server, just clear local
+  };
+
+  // Refresh sessions after sending a message (to update titles)
+  useEffect(() => {
+    if (messages.length > 0 && !isChatLoading) {
+      refreshSessions();
+    }
+  }, [messages.length, isChatLoading, refreshSessions]);
 
   return (
     <div className="h-screen flex overflow-hidden">
@@ -76,8 +114,25 @@ function App() {
           <div className="p-3 border-b border-white/[0.05]">
             <div className="flex gap-1 p-1 bg-white/[0.02] rounded-xl">
               <button
+                onClick={() => setActiveTab('chats')}
+                className={`flex-1 flex items-center justify-center gap-1.5 px-2 py-2.5 rounded-lg 
+                          text-sm font-medium transition-all duration-200 ${
+                  activeTab === 'chats'
+                    ? 'bg-white/[0.08] text-white'
+                    : 'text-gray-400 hover:text-gray-200'
+                }`}
+              >
+                <MessagesSquare className="w-4 h-4" />
+                Chats
+                {sessions.length > 0 && (
+                  <span className="ml-0.5 px-1.5 py-0.5 text-xs bg-violet-500/20 text-violet-400 rounded-full">
+                    {sessions.length}
+                  </span>
+                )}
+              </button>
+              <button
                 onClick={() => setActiveTab('documents')}
-                className={`flex-1 flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg 
+                className={`flex-1 flex items-center justify-center gap-1.5 px-2 py-2.5 rounded-lg 
                           text-sm font-medium transition-all duration-200 ${
                   activeTab === 'documents'
                     ? 'bg-white/[0.08] text-white'
@@ -85,16 +140,16 @@ function App() {
                 }`}
               >
                 <FileText className="w-4 h-4" />
-                Documents
+                Docs
                 {hasDocuments && (
-                  <span className="ml-1 px-1.5 py-0.5 text-xs bg-sky-500/20 text-sky-400 rounded-full">
+                  <span className="ml-0.5 px-1.5 py-0.5 text-xs bg-sky-500/20 text-sky-400 rounded-full">
                     {documents.length}
                   </span>
                 )}
               </button>
               <button
                 onClick={() => setActiveTab('upload')}
-                className={`flex-1 flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg 
+                className={`flex-1 flex items-center justify-center gap-1.5 px-2 py-2.5 rounded-lg 
                           text-sm font-medium transition-all duration-200 ${
                   activeTab === 'upload'
                     ? 'bg-white/[0.08] text-white'
@@ -109,7 +164,16 @@ function App() {
 
           {/* Sidebar Content */}
           <div className="flex-1 overflow-y-auto p-4 scrollbar-hide">
-            {activeTab === 'documents' ? (
+            {activeTab === 'chats' ? (
+              <SessionList
+                sessions={sessions}
+                currentSessionId={currentSessionId}
+                isLoading={isSessionsLoading}
+                onCreateSession={handleCreateSession}
+                onSwitchSession={handleSwitchSession}
+                onDeleteSession={deleteSession}
+              />
+            ) : activeTab === 'documents' ? (
               <DocumentList 
                 documents={documents}
                 onDelete={deleteDocument}
@@ -210,6 +274,7 @@ function App() {
             <ChatInterface
               messages={messages}
               isLoading={isChatLoading}
+              isLoadingHistory={isLoadingHistory}
               onSendMessage={sendMessage}
               onCancelRequest={cancelRequest}
               hasDocuments={hasDocuments}

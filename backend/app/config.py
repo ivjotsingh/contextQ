@@ -38,6 +38,12 @@ class Settings(BaseSettings):
     # Redis Configuration (required)
     redis_url: str = Field(..., description="Upstash Redis URL")
 
+    # Firebase Configuration (required for chat history)
+    # Can be either a JSON string or a file path to the credentials JSON
+    firebase_credentials: str = Field(
+        ..., description="Firebase service account JSON string or path to JSON file"
+    )
+
     # Application Settings
     environment: str = Field(default="development", description="Environment name")
     debug: bool = Field(default=False, description="Debug mode")
@@ -63,6 +69,14 @@ class Settings(BaseSettings):
         default=0.2, description="LLM temperature for factual responses"
     )
     llm_max_tokens: int = Field(default=2048, description="Max tokens for generation")
+
+    # Query Decomposition Settings
+    max_sub_queries: int = Field(
+        default=6, description="Max sub-queries for query decomposition"
+    )
+    decomposition_top_k: int = Field(
+        default=4, description="Chunks to retrieve per sub-query"
+    )
 
     # Cache TTLs (in seconds)
     embedding_cache_ttl: int = Field(

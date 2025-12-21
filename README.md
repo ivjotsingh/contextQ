@@ -239,13 +239,29 @@ contextq/
 
 ## Future Improvements
 
-- [ ] Cross-encoder reranking for better retrieval
-- [ ] Hybrid search (BM25 + vector)
+### Storage & Scalability
+- [ ] **S3 file storage** - Store original documents in S3 for persistence, re-processing, and audit trail
+  ```
+  Current:  Upload → Parse → Chunk → Embed → Qdrant (file discarded)
+  Future:   Upload → S3 → Parse → Chunk → Embed → Qdrant (s3_url in metadata)
+  ```
+- [ ] **Multi-tenant support** - User authentication with document isolation per user/org
+
+### Retrieval Quality
+- [ ] Cross-encoder reranking for better retrieval precision
+- [ ] Hybrid search (BM25 + vector) for keyword + semantic matching
+- [ ] Adaptive chunking based on document structure
+
+### Document Processing
 - [ ] Table extraction with tabula-py
-- [ ] OCR for images with pytesseract
+- [ ] OCR for scanned PDFs with pytesseract
+- [ ] Image/chart understanding with vision models
+
+### Security & Operations
 - [ ] User authentication with JWT
 - [ ] Rate limiting with slowapi
-- [ ] Conversation memory for follow-ups
+- [ ] Usage analytics and monitoring
+- [ ] Document versioning
 
 ## Testing
 

@@ -27,6 +27,8 @@ from fastapi import (
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.api.schemas import (
+    ChatHistoryMessage,
+    ChatHistoryResponse,
     ChatRequest,
     ChatResponse,
     DocumentListResponse,
@@ -34,6 +36,9 @@ from app.api.schemas import (
     DocumentUploadResponse,
     HealthResponse,
     ServiceStatus,
+    SessionListResponse,
+    SessionMetadata,
+    SourcePassage,
 )
 from app.config import get_settings
 from app.responses import (
@@ -52,6 +57,7 @@ from app.services.document import (
     UnsupportedFileTypeError,
 )
 from app.services.embeddings import EmbeddingError, EmbeddingService
+from app.services.firestore import FirestoreService
 from app.services.rag import LLMError, RAGError, RAGService
 from app.services.vector_store import VectorStoreError, VectorStoreService
 
@@ -89,13 +95,19 @@ def get_cache_service() -> CacheService:
     return CacheService()
 
 
+def get_firestore_service() -> FirestoreService:
+    """Get Firestore service instance."""
+    return FirestoreService()
+
+
 def get_rag_service(
     embedding_service: EmbeddingService = Depends(get_embedding_service),
     vector_store: VectorStoreService = Depends(get_vector_store),
     cache_service: CacheService = Depends(get_cache_service),
+    firestore_service: FirestoreService = Depends(get_firestore_service),
 ) -> RAGService:
     """Get RAG service instance with dependencies."""
-    return RAGService(embedding_service, vector_store, cache_service)
+    return RAGService(embedding_service, vector_store, cache_service, firestore_service)
 
 
 async def get_or_create_session(
@@ -597,5 +609,278 @@ async def delete_document(
         return JSONResponse(
             content=response,
             status_code=get_http_status(ResponseCode.VECTOR_STORE_ERROR),
+        )
+
+
+# =============================================================================
+# Chat History
+# =============================================================================
+
+
+@router.get("/chat/history", response_model=ChatHistoryResponse, tags=["Chat"])
+async def get_chat_history(
+    limit: int = 50,
+    session_id: str = Depends(get_or_create_session),
+    firestore_service: FirestoreService = Depends(get_firestore_service),
+) -> ChatHistoryResponse:
+    """Get chat history for the current session.
+
+    Returns messages in chronological order (oldest first).
+    """
+    try:
+        messages = await firestore_service.get_messages(session_id, limit=limit)
+        total_count = await firestore_service.get_message_count(session_id)
+
+        history_messages = []
+        for msg in messages:
+            sources = None
+            if msg.get("sources"):
+                sources = [
+                    SourcePassage(
+                        text=s.get("text", ""),
+                        filename=s.get("filename", ""),
+                        page_number=s.get("page_number"),
+                        chunk_index=s.get("chunk_index", 0),
+                        relevance_score=s.get("relevance_score", 0.0),
+                    )
+                    for s in msg["sources"]
+                ]
+
+            history_messages.append(
+                ChatHistoryMessage(
+                    id=msg.get("id", ""),
+                    role=msg.get("role", ""),
+                    content=msg.get("content", ""),
+                    timestamp=msg.get("timestamp", ""),
+                    sources=sources,
+                )
+            )
+
+        return ChatHistoryResponse(
+            messages=history_messages,
+            total_count=total_count,
+            has_more=total_count > limit,
+        )
+
+    except Exception as e:
+        logger.exception("Failed to get chat history")
+        raise HTTPException(
+            status_code=500,
+            detail=create_error_response(
+                code=ResponseCode.INTERNAL_ERROR,
+                custom_message=f"Failed to retrieve chat history: {e}",
+            ),
+        )
+
+
+@router.delete("/chat/history", tags=["Chat"])
+async def clear_chat_history(
+    session_id: str = Depends(get_or_create_session),
+    firestore_service: FirestoreService = Depends(get_firestore_service),
+) -> JSONResponse:
+    """Clear chat history for the current session."""
+    request_id = str(uuid.uuid4())[:8]
+    logger.info("[%s] Clear chat history request for session: %s", request_id, session_id)
+
+    try:
+        deleted_count = await firestore_service.clear_history(session_id)
+
+        response = create_success_response(
+            code=ResponseCode.SUCCESS,
+            data={"messages_deleted": deleted_count},
+            request_id=request_id,
+        )
+        return JSONResponse(content=response, status_code=200)
+
+    except Exception as e:
+        logger.exception("[%s] Failed to clear chat history", request_id)
+        response = create_error_response(
+            code=ResponseCode.INTERNAL_ERROR,
+            custom_message=f"Failed to clear chat history: {e}",
+            request_id=request_id,
+        )
+        return JSONResponse(
+            content=response,
+            status_code=get_http_status(ResponseCode.INTERNAL_ERROR),
+        )
+
+
+# =============================================================================
+# Session Management
+# =============================================================================
+
+
+@router.get("/sessions", response_model=SessionListResponse, tags=["Sessions"])
+async def list_sessions(
+    session_id: str = Depends(get_or_create_session),
+    firestore_service: FirestoreService = Depends(get_firestore_service),
+) -> SessionListResponse:
+    """List all chat sessions for the current user.
+
+    Returns sessions sorted by last activity (most recent first).
+    """
+    try:
+        sessions = await firestore_service.get_sessions(limit=20)
+
+        session_list = [
+            SessionMetadata(
+                id=s["id"],
+                title=s.get("title", "New Chat"),
+                last_activity=s.get("last_activity"),
+                message_count=s.get("message_count", 0),
+            )
+            for s in sessions
+        ]
+
+        return SessionListResponse(
+            sessions=session_list,
+            current_session_id=session_id,
+        )
+
+    except Exception as e:
+        logger.exception("Failed to list sessions")
+        raise HTTPException(
+            status_code=500,
+            detail=create_error_response(
+                code=ResponseCode.INTERNAL_ERROR,
+                custom_message=f"Failed to list sessions: {e}",
+            ),
+        )
+
+
+@router.post("/sessions", tags=["Sessions"])
+async def create_session(
+    request: Request,
+    firestore_service: FirestoreService = Depends(get_firestore_service),
+) -> JSONResponse:
+    """Create a new chat session.
+
+    Returns the new session ID in a cookie.
+    """
+    request_id = str(uuid.uuid4())[:8]
+    new_session_id = str(uuid.uuid4())
+
+    try:
+        session = await firestore_service.create_session(new_session_id)
+
+        response = create_success_response(
+            code=ResponseCode.SUCCESS,
+            data=session,
+            request_id=request_id,
+        )
+
+        settings = get_settings()
+        json_response = JSONResponse(content=response, status_code=201)
+        json_response.set_cookie(
+            key="session_id",
+            value=new_session_id,
+            httponly=True,
+            max_age=settings.session_ttl,
+            samesite="lax",
+        )
+        return json_response
+
+    except Exception as e:
+        logger.exception("[%s] Failed to create session", request_id)
+        response = create_error_response(
+            code=ResponseCode.INTERNAL_ERROR,
+            custom_message=f"Failed to create session: {e}",
+            request_id=request_id,
+        )
+        return JSONResponse(
+            content=response,
+            status_code=get_http_status(ResponseCode.INTERNAL_ERROR),
+        )
+
+
+@router.put("/sessions/{target_session_id}/switch", tags=["Sessions"])
+async def switch_session(
+    target_session_id: str,
+    request: Request,
+) -> JSONResponse:
+    """Switch to a different session.
+
+    Updates the session cookie to the target session.
+    """
+    request_id = str(uuid.uuid4())[:8]
+
+    settings = get_settings()
+    response = create_success_response(
+        code=ResponseCode.SUCCESS,
+        data={"session_id": target_session_id},
+        request_id=request_id,
+    )
+
+    json_response = JSONResponse(content=response, status_code=200)
+    json_response.set_cookie(
+        key="session_id",
+        value=target_session_id,
+        httponly=True,
+        max_age=settings.session_ttl,
+        samesite="lax",
+    )
+    return json_response
+
+
+@router.delete("/sessions/{target_session_id}", tags=["Sessions"])
+async def delete_session(
+    target_session_id: str,
+    session_id: str = Depends(get_or_create_session),
+    firestore_service: FirestoreService = Depends(get_firestore_service),
+) -> JSONResponse:
+    """Delete a session and all its messages.
+
+    If deleting the current session, a new session will be created.
+    """
+    request_id = str(uuid.uuid4())[:8]
+    logger.info("[%s] Delete session request: %s", request_id, target_session_id)
+
+    try:
+        success = await firestore_service.delete_session(target_session_id)
+
+        if not success:
+            response = create_error_response(
+                code=ResponseCode.INTERNAL_ERROR,
+                custom_message="Failed to delete session",
+                request_id=request_id,
+            )
+            return JSONResponse(
+                content=response,
+                status_code=get_http_status(ResponseCode.INTERNAL_ERROR),
+            )
+
+        response = create_success_response(
+            code=ResponseCode.SUCCESS,
+            data={"deleted_session_id": target_session_id},
+            request_id=request_id,
+        )
+
+        settings = get_settings()
+        json_response = JSONResponse(content=response, status_code=200)
+
+        # If we deleted the current session, create a new one
+        if target_session_id == session_id:
+            new_session_id = str(uuid.uuid4())
+            await firestore_service.create_session(new_session_id)
+            json_response.set_cookie(
+                key="session_id",
+                value=new_session_id,
+                httponly=True,
+                max_age=settings.session_ttl,
+                samesite="lax",
+            )
+
+        return json_response
+
+    except Exception as e:
+        logger.exception("[%s] Failed to delete session", request_id)
+        response = create_error_response(
+            code=ResponseCode.INTERNAL_ERROR,
+            custom_message=f"Failed to delete session: {e}",
+            request_id=request_id,
+        )
+        return JSONResponse(
+            content=response,
+            status_code=get_http_status(ResponseCode.INTERNAL_ERROR),
         )
 

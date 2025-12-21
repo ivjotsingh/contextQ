@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 
 const API_BASE = '/api';
 
@@ -8,8 +8,60 @@ const API_BASE = '/api';
 export function useChat() {
   const [messages, setMessages] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(true);
   const [error, setError] = useState(null);
   const abortControllerRef = useRef(null);
+  const historyLoadedRef = useRef(false);
+
+  /**
+   * Load chat history from server
+   */
+  const loadHistory = useCallback(async () => {
+    setIsLoadingHistory(true);
+    try {
+      const response = await fetch(`${API_BASE}/chat/history?limit=50`);
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const data = await response.json();
+      
+      if (data.messages && data.messages.length > 0) {
+        const formattedMessages = data.messages.map((msg, index) => ({
+          id: msg.id || Date.now() + index,
+          role: msg.role,
+          content: msg.content,
+          sources: msg.sources || [],
+          timestamp: msg.timestamp,
+          isStreaming: false,
+        }));
+        setMessages(formattedMessages);
+      } else {
+        setMessages([]);
+      }
+    } catch (err) {
+      console.error('Failed to load chat history:', err);
+      // Non-critical error, just continue without history
+    } finally {
+      setIsLoadingHistory(false);
+    }
+  }, []);
+
+  /**
+   * Load chat history from server on mount
+   */
+  useEffect(() => {
+    if (historyLoadedRef.current) return;
+    historyLoadedRef.current = true;
+    loadHistory();
+  }, [loadHistory]);
+
+  /**
+   * Reload history (e.g., after switching sessions)
+   */
+  const reloadHistory = useCallback(async () => {
+    await loadHistory();
+  }, [loadHistory]);
 
   /**
    * Send a message and get a streaming response
@@ -203,11 +255,23 @@ export function useChat() {
   }, []);
 
   /**
-   * Clear all messages
+   * Clear all messages (local and optionally server)
+   * @param {boolean} deleteFromServer - Whether to also delete from server (default: true)
    */
-  const clearMessages = useCallback(() => {
+  const clearMessages = useCallback(async (deleteFromServer = true) => {
     setMessages([]);
     setError(null);
+
+    // Also clear on server if requested
+    if (deleteFromServer) {
+      try {
+        await fetch(`${API_BASE}/chat/history`, {
+          method: 'DELETE',
+        });
+      } catch (err) {
+        console.error('Failed to clear chat history on server:', err);
+      }
+    }
   }, []);
 
   /**
@@ -223,11 +287,13 @@ export function useChat() {
   return {
     messages,
     isLoading,
+    isLoadingHistory,
     error,
     sendMessage,
     sendMessageSync,
     clearMessages,
     cancelRequest,
+    reloadHistory,
   };
 }
 

@@ -147,3 +147,51 @@ class FileErrorDetail(BaseModel):
     file_type: str | None = None
     supported_types: list[str] | None = None
 
+
+# =============================================================================
+# Chat History Schemas
+# =============================================================================
+
+
+class ChatHistoryMessage(BaseModel):
+    """A message from chat history."""
+
+    id: str = Field(..., description="Message ID")
+    role: str = Field(..., description="Message role (user/assistant)")
+    content: str = Field(..., description="Message content")
+    timestamp: str = Field(..., description="ISO timestamp")
+    sources: list[SourcePassage] | None = Field(
+        None, description="Source passages for assistant messages"
+    )
+
+
+class ChatHistoryResponse(BaseModel):
+    """Response for chat history endpoint."""
+
+    messages: list[ChatHistoryMessage]
+    total_count: int = Field(..., description="Total message count in session")
+    has_more: bool = Field(
+        default=False, description="Whether there are more messages"
+    )
+
+
+# =============================================================================
+# Session Management Schemas
+# =============================================================================
+
+
+class SessionMetadata(BaseModel):
+    """Metadata for a chat session."""
+
+    id: str = Field(..., description="Session ID")
+    title: str = Field(default="New Chat", description="Session title")
+    last_activity: str | None = Field(None, description="ISO timestamp of last activity")
+    message_count: int = Field(default=0, description="Number of messages in session")
+
+
+class SessionListResponse(BaseModel):
+    """Response for listing sessions."""
+
+    sessions: list[SessionMetadata]
+    current_session_id: str = Field(..., description="The current active session ID")
+
