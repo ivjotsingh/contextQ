@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from pydantic import BaseModel, Field
 
 from config import get_settings
-from services import get_vector_store
+from dependencies import get_vector_store
 
 # --- Response Schemas ---
 

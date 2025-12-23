@@ -213,11 +213,14 @@ class LLMService:
             # Extract tool use from response
             for block in response.content:
                 if block.type == "tool_use" and block.name == tool_name:
-                    logger.debug(
-                        "Tool '%s' called successfully, input: %s",
-                        tool_name,
-                        block.input,
-                    )
+                    # Log token usage
+                    if response.usage:
+                        logger.debug(
+                            "Tool '%s' usage: %d input, %d output tokens",
+                            tool_name,
+                            response.usage.input_tokens,
+                            response.usage.output_tokens,
+                        )
                     return block.input
 
             # Tool was not called (shouldn't happen with tool_choice)
@@ -254,6 +257,15 @@ class LLMService:
                 system=system,
                 messages=[{"role": "user", "content": prompt}],
             )
+
+            # Log token usage (zero overhead - already in response)
+            if response.usage:
+                logger.debug(
+                    "LLM usage: %d input, %d output tokens",
+                    response.usage.input_tokens,
+                    response.usage.output_tokens,
+                )
+
             return response.content[0].text
         except RateLimitError as e:
             logger.warning("Claude rate limit hit: %s", e)

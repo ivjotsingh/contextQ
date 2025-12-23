@@ -77,59 +77,28 @@ ContextQ is a RAG (Retrieval-Augmented Generation) powered application that enab
 
 ## Quick Start
 
-### Prerequisites
+👉 **[See QUICKSTART.md for step-by-step setup with copy-paste commands](QUICKSTART.md)**
 
-- Python 3.11+
-- Node.js 18+
-- API keys for:
-- Anthropic (Claude)
-- Voyage AI (Embeddings - Free tier: 200M tokens)
-  - Qdrant Cloud
-  - Upstash Redis
-
-### 1. Clone & Setup
+### TL;DR (Docker)
 
 ```bash
-git clone https://github.com/yourusername/contextq.git
-cd contextq
+# Clone
+git clone https://github.com/yourusername/contextq.git && cd contextq
 
-# Copy environment template
+# Setup env
 cp .env.example .env
-# Edit .env with your API keys
+# Edit .env with your API keys (Anthropic, Voyage, Qdrant, Firebase)
+
+# Firebase credentials must be base64 encoded for Docker:
+cat /path/to/firebase-creds.json | base64 | tr -d '\n'
+# Add result to .env as FIREBASE_CREDENTIALS=<base64-string>
+
+# Build & run
+docker build -t contextq .
+docker run -p 8000:8000 --env-file .env contextq
 ```
 
-### 2. Backend Setup
-
-```bash
-cd backend
-
-# Install uv (if not installed)
-# curl -LsSf https://astral.sh/uv/install.sh | sh
-# Or: brew install uv
-
-# Create virtual environment and install dependencies
-uv venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
-uv pip install -r requirements.txt
-
-# Run development server
-uvicorn main:app --reload --port 8000
-# Or with uv: uv run uvicorn main:app --reload --port 8000
-```
-
-### 3. Frontend Setup
-
-```bash
-cd frontend
-
-# Install dependencies
-npm install
-
-# Run development server
-npm run dev
-```
-
-Visit http://localhost:5173 to use the app.
+Open http://localhost:8000
 
 ## API Endpoints
 
@@ -159,21 +128,7 @@ curl -X POST http://localhost:8000/api/chat \
 
 ## Docker Deployment
 
-### Build & Run
-
-```bash
-# Build the image
-docker build -t contextq .
-
-# Run with environment variables
-docker run -p 8000:8000 \
-  -e ANTHROPIC_API_KEY=your-key \
-  -e VOYAGE_API_KEY=your-key \
-  -e QDRANT_URL=your-url \
-  -e QDRANT_API_KEY=your-key \
-  -e REDIS_URL=your-url \
-  contextq
-```
+See [QUICKSTART.md](QUICKSTART.md) for Docker setup with base64-encoded Firebase credentials.
 
 ### Deploy to Cloud
 
@@ -382,6 +337,3 @@ pytest tests/test_chunker.py -v
 5. Submit a pull request
 
 ---
-
-Built with ❤️ for the interview assignment.
-

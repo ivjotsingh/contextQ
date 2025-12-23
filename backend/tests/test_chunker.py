@@ -1,7 +1,6 @@
 """Tests for the chunker service."""
 
-from services.chunker import Chunker
-from services.types import TextChunk
+from services.chunker import Chunker, TextChunk
 
 
 class TestChunker:
@@ -93,18 +92,6 @@ class TestChunker:
 
         for chunk in result:
             assert chunk.page_number is None
-
-    def test_estimate_chunk_count(self):
-        """Test chunk count estimation."""
-        # Short text
-        assert self.chunker.estimate_chunk_count(50) == 1
-
-        # Exactly chunk size - with overlap, this estimates 2
-        assert self.chunker.estimate_chunk_count(100) >= 1
-
-        # Longer text
-        estimate = self.chunker.estimate_chunk_count(500)
-        assert estimate > 1
 
 
 class TestTextChunk:

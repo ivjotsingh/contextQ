@@ -9,16 +9,39 @@ Handles:
 
 import logging
 import time
+from dataclasses import dataclass
 from uuid import uuid4
 
 from qdrant_client import AsyncQdrantClient
 from qdrant_client.http import models as qdrant_models
-from qdrant_client.http.exceptions import ResponseHandlingException
 
 from config import get_settings
-from services.types import DocumentInfo, RetrievedChunk
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class RetrievedChunk:
+    """A chunk retrieved from vector search with relevance score."""
+
+    text: str
+    filename: str
+    page_number: int | None
+    chunk_index: int
+    doc_id: str
+    score: float
+
+
+@dataclass
+class DocumentInfo:
+    """Document metadata from vector store."""
+
+    doc_id: str
+    filename: str
+    document_type: str
+    content_hash: str
+    upload_timestamp: str
+    total_chunks: int
 
 
 class VectorStoreError(Exception):
@@ -421,9 +444,6 @@ class VectorStoreService:
                 "collections": len(collections.collections),
             }
 
-        except ResponseHandlingException as e:
-            logger.warning("Vector store health check failed: %s", e)
-            return {"status": "unhealthy", "error": str(e)}
         except Exception as e:
             logger.warning("Vector store health check failed: %s", e)
             return {"status": "unhealthy", "error": str(e)}

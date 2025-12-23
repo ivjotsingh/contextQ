@@ -14,8 +14,6 @@ from fastapi import Request, Response
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from config import get_settings
-
 logger = logging.getLogger(__name__)
 
 
@@ -181,20 +179,3 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             response.headers[key] = value
 
         return response
-
-
-# Default rate limiter instance
-_rate_limiter: RateLimiter | None = None
-
-
-def get_rate_limiter() -> RateLimiter:
-    """Get the rate limiter instance."""
-    global _rate_limiter
-    if _rate_limiter is None:
-        settings = get_settings()
-        config = RateLimitConfig(
-            requests_per_minute=getattr(settings, "rate_limit_per_minute", 20),
-            requests_per_hour=getattr(settings, "rate_limit_per_hour", 200),
-        )
-        _rate_limiter = RateLimiter(config)
-    return _rate_limiter

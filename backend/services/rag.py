@@ -5,7 +5,9 @@ Orchestrates the RAG pipeline:
 2. Embed user question
 3. Retrieve relevant chunks from vector store (filtered by session_id)
 4. Generate answer with Claude (streaming)
-5. Save to chat history
+
+Note: This service is stateless and does not manage chat history persistence.
+Chat history should be managed by the application layer (chat handlers).
 """
 
 import asyncio
@@ -17,16 +19,17 @@ from typing import Any
 from anthropic import APITimeoutError
 
 from config import get_settings
-from db import FirestoreService
 from llm.prompts import (
     ASSISTANT_SYSTEM_PROMPT,
     DOCUMENT_QA_SYSTEM_PROMPT,
+    QUERY_ANALYSIS_PROMPT,
+    QUERY_ANALYSIS_SCHEMA,
+    QUERY_ANALYSIS_SYSTEM_PROMPT,
 )
-from services.chat_history import ChatHistoryManager
+from llm.service import LLMError
+from llm.service import LLMService as LLMClient
 from services.embeddings import EmbeddingService
-from services.llm import LLMClient, LLMError
-from services.types import RetrievedChunk
-from services.vector_store import VectorStoreService
+from services.vector_store import RetrievedChunk, VectorStoreService
 
 logger = logging.getLogger(__name__)
 
@@ -99,56 +102,20 @@ class _QueryAnalyzer:
                 else f"{doc_count} documents"
             )
 
-            # Build prompt for query analysis
-            prompt = f"""Analyze this user question for a document Q&A system.
-
-Available documents: {doc_names_str}
-User question: {question}
-
-Determine:
-1. If this is a GENERAL question that doesn't need document lookup (skip_rag=true)
-   - Greetings, meta questions about the assistant, general knowledge
-2. If it requires information from multiple documents (needs_decomposition=true)
-   - Comparison, synthesis, overview of all documents
-   - If yes, generate up to {self.max_sub_queries} sub-queries targeting specific documents"""
-
-            # Define the tool schema for structured output
-            analysis_schema = {
-                "type": "object",
-                "properties": {
-                    "skip_rag": {
-                        "type": "boolean",
-                        "description": "True if question doesn't need document lookup",
-                    },
-                    "needs_decomposition": {
-                        "type": "boolean",
-                        "description": "True if question requires multiple document queries",
-                    },
-                    "reasoning": {
-                        "type": "string",
-                        "description": "Brief explanation of the decision",
-                    },
-                    "sub_queries": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Sub-queries if decomposition is needed, empty otherwise",
-                    },
-                },
-                "required": [
-                    "skip_rag",
-                    "needs_decomposition",
-                    "reasoning",
-                    "sub_queries",
-                ],
-            }
+            # Build prompt from template
+            prompt = QUERY_ANALYSIS_PROMPT.format(
+                doc_names_str=doc_names_str,
+                question=question,
+                max_sub_queries=self.max_sub_queries,
+            )
 
             # Use tool_use for guaranteed structured output
             result = await asyncio.wait_for(
                 self.llm_client.generate_with_tool(
                     prompt=prompt,
-                    system="You are a query analyzer for a document Q&A system.",
+                    system=QUERY_ANALYSIS_SYSTEM_PROMPT,
                     tool_name="analyze_query",
-                    tool_schema=analysis_schema,
+                    tool_schema=QUERY_ANALYSIS_SCHEMA,
                     model=self.model,
                     temperature=0,
                     max_tokens=500,
@@ -258,14 +225,12 @@ class RAGService:
         self,
         embedding_service: EmbeddingService,
         vector_store: VectorStoreService,
-        firestore_service: FirestoreService | None = None,
     ) -> None:
         """Initialize RAG service.
 
         Args:
             embedding_service: Service for generating embeddings.
             vector_store: Service for vector similarity search.
-            firestore_service: Optional service for chat history persistence.
         """
         self.settings = get_settings()
         self.embedding_service = embedding_service
@@ -273,14 +238,12 @@ class RAGService:
 
         self._llm_client = LLMClient(self.settings)
         self._query_analyzer = _QueryAnalyzer(self._llm_client, self.settings)
-        self._chat_history = ChatHistoryManager(
-            firestore_service, self._llm_client, self.settings
-        )
 
     async def query_stream(
         self,
         question: str,
         session_id: str,
+        chat_history: str = "",
         doc_ids: list[str] | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
         """Process a RAG query with streaming response.
@@ -288,10 +251,12 @@ class RAGService:
         Args:
             question: User's question.
             session_id: Session identifier.
+            chat_history: Formatted chat history context string.
             doc_ids: Optional list of document IDs to search.
 
         Yields:
             Stream chunks with types: 'sources', 'content', 'done', 'error'.
+            The 'done' chunk includes 'full_answer' and 'sources' for persistence.
 
         Raises:
             ValueError: If question or session_id is empty.
@@ -309,7 +274,9 @@ class RAGService:
             # Step 3: Handle general questions (skip RAG)
             if analysis.skip_rag:
                 logger.info("Streaming: Skipping RAG for general question")
-                async for chunk in self._handle_general_question(session_id, question):
+                async for chunk in self._handle_general_question(
+                    question, chat_history
+                ):
                     yield chunk
                 return
 
@@ -338,7 +305,7 @@ class RAGService:
 
             # Step 7: Stream RAG response
             async for chunk in self._stream_rag_response(
-                session_id, question, relevant_chunks
+                question, relevant_chunks, chat_history
             ):
                 yield chunk
 
@@ -458,11 +425,16 @@ class RAGService:
 
     async def _stream_rag_response(
         self,
-        session_id: str,
         question: str,
         chunks: list[RetrievedChunk],
+        chat_history: str = "",
     ) -> AsyncGenerator[dict[str, Any], None]:
         """Stream the RAG response with sources.
+
+        Args:
+            question: User's question.
+            chunks: Retrieved chunks to use as context.
+            chat_history: Formatted chat history context.
 
         Yields:
             Stream chunks with types: 'sources', 'content', 'done'.
@@ -470,11 +442,6 @@ class RAGService:
         # Build context and sources
         context = self._build_context(chunks)
         sources = self._chunks_to_source_dicts(chunks)
-
-        # Get chat history and save user message
-        chat_history = await self._chat_history.get_context_and_save_user_message(
-            session_id, question
-        )
 
         # Yield sources first
         yield {"type": "sources", "sources": sources}
@@ -490,27 +457,27 @@ class RAGService:
             answer_parts.append(text_chunk)
             yield {"type": "content", "content": text_chunk}
 
-        # Save response to chat history
+        # Return full answer for handler to persist
         full_answer = "".join(answer_parts)
-        await self._chat_history.save_assistant_message(
-            session_id, full_answer, sources
-        )
-        await self._chat_history.maybe_generate_summary(session_id)
-
-        yield {"type": "done"}
+        yield {"type": "done", "full_answer": full_answer, "sources": sources}
 
     async def _handle_general_question(
         self,
-        session_id: str,
         question: str,
+        chat_history: str = "",
     ) -> AsyncGenerator[dict[str, Any], None]:
-        """Handle a general question that doesn't need RAG."""
-        chat_history = await self._chat_history.get_context_and_save_user_message(
-            session_id, question
-        )
+        """Handle a general question that doesn't need RAG.
+
+        Args:
+            question: User's question.
+            chat_history: Formatted chat history context.
+
+        Yields:
+            Stream chunks with types: 'sources', 'content', 'done'.
+        """
         yield {"type": "sources", "sources": []}
 
-        full_answer = ""
+        answer_parts: list[str] = []
         prompt = self._build_general_prompt(question, chat_history)
 
         async for text_chunk in self._llm_client.stream(
@@ -518,11 +485,12 @@ class RAGService:
             system_prompt=ASSISTANT_SYSTEM_PROMPT,
             temperature=0.7,
         ):
-            full_answer += text_chunk
+            answer_parts.append(text_chunk)
             yield {"type": "content", "content": text_chunk}
 
-        await self._chat_history.save_assistant_message(session_id, full_answer)
-        yield {"type": "done"}
+        # Return full answer for handler to persist
+        full_answer = "".join(answer_parts)
+        yield {"type": "done", "full_answer": full_answer, "sources": []}
 
     def _build_rag_prompt(
         self,
@@ -660,7 +628,3 @@ Please provide a clear, accurate answer based only on the information in the doc
             }
             for c in chunks
         ]
-
-    def _build_sources(self, chunks: list[RetrievedChunk]) -> list[dict[str, Any]]:
-        """Build source passage dicts from chunks."""
-        return self._chunks_to_source_dicts(chunks)

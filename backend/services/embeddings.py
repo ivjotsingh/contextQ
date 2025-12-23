@@ -3,18 +3,17 @@
 Features:
 - Batch processing for efficiency
 - Automatic retry with exponential backoff
+- In-memory caching to reduce API calls
 - Free tier: 200M tokens
 
 KNOWN LIMITATIONS:
 - The Voyage AI client uses global state for the API key (voyageai.api_key).
   This means only one API key can be used per process. If you need multi-tenant
   support with different API keys, you'll need to use separate processes.
-- Retry logic uses time.sleep() inside asyncio.to_thread(), which ties up a
-  thread pool thread during backoff. With many concurrent requests hitting
-  rate limits, this could exhaust the default thread pool. Consider increasing
-  the thread pool size if this becomes an issue.
+- Retry logic uses asyncio.sleep() for non-blocking backoff.
 """
 
+import hashlib
 import logging
 import time
 
@@ -24,9 +23,54 @@ except ImportError:
     voyageai = None
 
 from config import get_settings
-from services.embedding_cache import EmbeddingCache
 
 logger = logging.getLogger(__name__)
+
+
+class EmbeddingCache:
+    """Simple in-memory cache for embeddings."""
+
+    def __init__(self, max_size: int = 10000):
+        """Initialize cache with max size limit."""
+        self._cache: dict[str, list[float]] = {}
+        self.max_size = max_size
+        self.hits = 0
+        self.misses = 0
+
+    def _get_key(self, text: str) -> str:
+        """Generate cache key from text content."""
+        return hashlib.sha256(text.encode()).hexdigest()
+
+    def get(self, text: str) -> list[float] | None:
+        """Get embedding from cache if exists."""
+        key = self._get_key(text)
+        if key in self._cache:
+            self.hits += 1
+            return self._cache[key]
+        self.misses += 1
+        return None
+
+    def set(self, text: str, embedding: list[float]) -> None:
+        """Store embedding in cache."""
+        if len(self._cache) >= self.max_size:
+            # Simple eviction: remove oldest (first) entry
+            first_key = next(iter(self._cache))
+            del self._cache[first_key]
+
+        key = self._get_key(text)
+        self._cache[key] = embedding
+
+    def get_stats(self) -> dict:
+        """Get cache statistics."""
+        total = self.hits + self.misses
+        hit_rate = (self.hits / total * 100) if total > 0 else 0
+        return {
+            "size": len(self._cache),
+            "max_size": self.max_size,
+            "hits": self.hits,
+            "misses": self.misses,
+            "hit_rate": f"{hit_rate:.1f}%",
+        }
 
 
 class EmbeddingError(Exception):
@@ -195,16 +239,3 @@ class EmbeddingService:
         raise EmbeddingError(
             f"Failed to generate embeddings after {retry_count} attempts: {last_error}"
         )
-
-    def get_embedding_info(self) -> dict[str, int | str]:
-        """Get information about the embedding configuration.
-
-        Returns:
-            Dict with model, dimensions, batch_size, and cache stats.
-        """
-        return {
-            "model": self.model,
-            "dimensions": self.dimensions,
-            "batch_size": self.batch_size,
-            "cache": self._cache.get_stats(),
-        }

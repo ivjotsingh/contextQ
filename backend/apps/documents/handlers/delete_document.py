@@ -6,8 +6,8 @@ import uuid
 from fastapi import Cookie
 from fastapi.responses import JSONResponse
 
+from dependencies import get_vector_store
 from responses import ResponseCode, error_response, success_response
-from services import get_vector_store
 from services.vector_store import VectorStoreError
 
 logger = logging.getLogger(__name__)

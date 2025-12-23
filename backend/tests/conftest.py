@@ -2,6 +2,16 @@
 
 import os
 import sys
+
+# Set required env vars BEFORE any imports that might trigger Settings
+os.environ.setdefault("ANTHROPIC_API_KEY", "test-anthropic-key")
+os.environ.setdefault("VOYAGE_API_KEY", "test-voyage-key")
+os.environ.setdefault("QDRANT_URL", "http://localhost:6333")
+os.environ.setdefault("QDRANT_API_KEY", "test-qdrant-key")
+os.environ.setdefault(
+    "FIREBASE_CREDENTIALS", '{"type":"service_account","project_id":"test"}'
+)
+
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest

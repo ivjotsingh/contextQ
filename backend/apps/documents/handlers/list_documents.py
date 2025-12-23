@@ -7,8 +7,8 @@ from datetime import UTC, datetime
 from fastapi import Cookie, HTTPException
 from pydantic import BaseModel, Field
 
+from dependencies import get_vector_store
 from responses import ResponseCode, error_dict
-from services import get_vector_store
 from services.vector_store import VectorStoreError
 
 logger = logging.getLogger(__name__)

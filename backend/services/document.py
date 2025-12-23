@@ -196,7 +196,19 @@ class DocumentParser:
         """Parse Word document using python-docx (synchronous)."""
         try:
             doc = DocxDocument(file_path)
-            paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
+            text_parts = []
+
+            # Extract paragraphs
+            for p in doc.paragraphs:
+                if p.text.strip():
+                    text_parts.append(p.text)
+
+            # Extract tables
+            for table in doc.tables:
+                for row in table.rows:
+                    row_text = " | ".join(cell.text.strip() for cell in row.cells)
+                    if row_text.strip():
+                        text_parts.append(row_text)
 
             metadata = {}
             if doc.core_properties:
@@ -208,7 +220,7 @@ class DocumentParser:
                 }
 
             return {
-                "text": "\n\n".join(paragraphs),
+                "text": "\n\n".join(text_parts),
                 "page_count": None,
                 "metadata": metadata,
             }

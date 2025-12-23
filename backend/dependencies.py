@@ -51,7 +51,6 @@ def get_chunker() -> Chunker:
 def get_rag_service(
     embedding_service: EmbeddingService = Depends(get_embedding_service),
     vector_store: VectorStoreService = Depends(get_vector_store),
-    firestore_service: FirestoreService = Depends(get_firestore_service),
 ) -> RAGService:
     """Get RAG service with injected dependencies.
 
@@ -60,5 +59,23 @@ def get_rag_service(
     return RAGService(
         embedding_service=embedding_service,
         vector_store=vector_store,
+    )
+
+
+def get_chat_history_manager(
+    firestore_service: FirestoreService = Depends(get_firestore_service),
+):
+    """Get chat history manager with injected dependencies.
+
+    Returns:
+        ChatHistoryManager instance for managing chat persistence.
+    """
+    from apps.chat.chat_history import ChatHistoryManager
+    from config import get_settings
+    from llm.service import LLMService
+
+    return ChatHistoryManager(
         firestore_service=firestore_service,
+        llm_client=LLMService(get_settings()),
+        settings=get_settings(),
     )

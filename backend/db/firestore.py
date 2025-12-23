@@ -21,14 +21,16 @@ logger = logging.getLogger(__name__)
 
 
 def _load_firebase_credentials(creds_value: str) -> dict:
-    """Load Firebase credentials from JSON string or file path.
+    """Load Firebase credentials from JSON string, file path, or base64.
 
     Args:
-        creds_value: Either a JSON string or a file path to credentials JSON
+        creds_value: Either a JSON string, file path, or base64-encoded JSON
 
     Returns:
         Parsed credentials dictionary
     """
+    import base64
+
     # Check if it's a file path
     if os.path.isfile(creds_value):
         logger.info("Loading Firebase credentials from file: %s", creds_value)
@@ -39,20 +41,30 @@ def _load_firebase_credentials(creds_value: str) -> dict:
     try:
         return json.loads(creds_value)
     except json.JSONDecodeError:
-        raise ValueError(
-            "FIREBASE_CREDENTIALS is neither valid JSON nor a valid file path"
-        )
+        pass
+
+    # Try to decode as base64
+    try:
+        decoded = base64.b64decode(creds_value).decode("utf-8")
+        return json.loads(decoded)
+    except Exception:
+        pass
+
+    raise ValueError(
+        "FIREBASE_CREDENTIALS is not valid JSON, file path, or base64-encoded JSON"
+    )
 
 
 class FirestoreService:
     """Service for managing chat history in Firestore."""
 
     _initialized: bool = False
-    _instance: "FirestoreService | None" = None
+    _db: AsyncClient | None = None
 
     def __init__(self) -> None:
         """Initialize Firestore client (singleton pattern)."""
         if FirestoreService._initialized:
+            self.db = FirestoreService._db
             return
 
         settings = get_settings()
@@ -72,10 +84,11 @@ class FirestoreService:
             )
 
             # Create AsyncClient with explicit credentials and project
-            self.db: AsyncClient = AsyncClient(
+            FirestoreService._db = AsyncClient(
                 project=creds_dict.get("project_id"),
                 credentials=gcp_credentials,
             )
+            self.db = FirestoreService._db
 
             FirestoreService._initialized = True
             logger.info("Firestore client initialized successfully")

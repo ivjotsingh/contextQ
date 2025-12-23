@@ -12,11 +12,22 @@ This is the "Recursive Text Splitter" pattern, widely used in production RAG sys
 """
 
 import logging
+from dataclasses import dataclass
 
 from config import get_settings
-from services.types import TextChunk
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class TextChunk:
+    """A chunk of text with position metadata."""
+
+    text: str
+    chunk_index: int
+    start_char: int
+    end_char: int
+    page_number: int | None = None
 
 
 # Separators in priority order - try to split at most meaningful boundary first
@@ -245,21 +256,3 @@ class Chunker:
             result.append(overlap_text + curr_chunk)
 
         return result
-
-    def estimate_chunk_count(self, text_length: int) -> int:
-        """Estimate number of chunks for a given text length.
-
-        Args:
-            text_length: Length of text in characters.
-
-        Returns:
-            Estimated number of chunks.
-        """
-        if text_length <= 0:
-            return 0
-
-        effective_step = self.chunk_size - self.chunk_overlap
-        if effective_step <= 0:
-            effective_step = self.chunk_size // 2
-
-        return max(1, (text_length - self.chunk_overlap) // effective_step + 1)

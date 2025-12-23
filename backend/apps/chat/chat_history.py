@@ -1,4 +1,4 @@
-"""Chat history management for RAG conversations.
+"""Chat history management for conversations.
 
 Handles message persistence, context building, and summary generation.
 """
@@ -8,7 +8,7 @@ from typing import Any
 
 from config import Settings
 from db import FirestoreService
-from services.llm import LLMClient
+from llm.service import LLMService as LLMClient
 
 logger = logging.getLogger(__name__)
 
@@ -33,16 +33,11 @@ class ChatHistoryManager:
         self.llm_client = llm_client
         self.settings = settings
 
-    async def get_context_and_save_user_message(
-        self,
-        session_id: str,
-        question: str,
-    ) -> str:
-        """Get chat history context and save user message.
+    async def get_context(self, session_id: str) -> str:
+        """Get formatted chat history context for a session.
 
         Args:
             session_id: Session identifier.
-            question: User's question to save.
 
         Returns:
             Formatted chat history context string, empty if no history.
@@ -54,13 +49,24 @@ class ChatHistoryManager:
             session_id,
             max_messages=self.settings.chat_history_max_messages,
         )
+        return chat_history
+
+    async def save_user_message(self, session_id: str, content: str) -> None:
+        """Save user message to history.
+
+        Args:
+            session_id: Session identifier.
+            content: User's message content.
+        """
+        if not self.firestore:
+            return
+
         await self.firestore.add_message(
             session_id=session_id,
             role="user",
-            content=question,
+            content=content,
         )
-        await self.firestore.update_session_activity(session_id, first_message=question)
-        return chat_history
+        await self.firestore.update_session_activity(session_id, first_message=content)
 
     async def save_assistant_message(
         self,
@@ -138,4 +144,3 @@ SUMMARY:"""
         except Exception as e:
             # Summary generation is non-critical, log and continue
             logger.warning("Failed to generate summary: %s", e)
-
