@@ -6,10 +6,10 @@ that gets mounted in main.py.
 
 from fastapi import APIRouter
 
-from chat import router as chat_router
-from documents import router as documents_router
-from health import router as health_router
-from sessions import router as sessions_router
+from apps.chat import router as chat_router
+from apps.documents import router as documents_router
+from apps.health import router as health_router
+from apps.sessions import router as sessions_router
 
 # Create main API router
 router = APIRouter()
@@ -19,4 +19,3 @@ router.include_router(health_router)
 router.include_router(documents_router)
 router.include_router(chat_router)
 router.include_router(sessions_router)
-

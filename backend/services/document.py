@@ -167,7 +167,9 @@ class DocumentParser:
                     if page_text:
                         text_parts.append(page_text)
                 except Exception as e:
-                    logger.warning("Failed to extract text from page %d: %s", page_num, e)
+                    logger.warning(
+                        "Failed to extract text from page %d: %s", page_num, e
+                    )
 
             metadata = {}
             if doc.metadata:
@@ -228,16 +230,3 @@ class DocumentParser:
 
         except Exception as e:
             raise DocumentParseError(f"Failed to parse TXT: {e}") from e
-
-
-# Lazy singleton
-_document_service: DocumentParser | None = None
-
-
-def get_document_service() -> DocumentParser:
-    """Get document parser service singleton."""
-    global _document_service
-    if _document_service is None:
-        _document_service = DocumentParser()
-    return _document_service
-

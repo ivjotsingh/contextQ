@@ -17,9 +17,6 @@ voyageai>=0.2.0
 # Vector Database
 qdrant-client>=1.12.0
 
-# Caching
-redis>=5.2.0
-
 # Document Parsing
 pymupdf>=1.25.0
 python-docx>=1.1.0

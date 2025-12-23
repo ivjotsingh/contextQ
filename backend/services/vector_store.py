@@ -170,7 +170,9 @@ class VectorStoreService:
             start_time = time.time()
 
             points = []
-            for i, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
+            for i, (chunk, embedding) in enumerate(
+                zip(chunks, embeddings, strict=False)
+            ):
                 point_id = str(uuid4())
                 payload = {
                     "doc_id": doc_id,
@@ -425,15 +427,3 @@ class VectorStoreService:
         except Exception as e:
             logger.warning("Vector store health check failed: %s", e)
             return {"status": "unhealthy", "error": str(e)}
-
-
-# Lazy singleton
-_vector_store: VectorStoreService | None = None
-
-
-def get_vector_store() -> VectorStoreService:
-    """Get vector store service singleton."""
-    global _vector_store
-    if _vector_store is None:
-        _vector_store = VectorStoreService()
-    return _vector_store

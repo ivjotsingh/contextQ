@@ -7,6 +7,8 @@ from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
+from fastapi.responses import JSONResponse
+
 
 class ResponseCode(str, Enum):
     """Response codes for API responses.
@@ -34,7 +36,6 @@ class ResponseCode(str, Enum):
     VECTOR_STORE_ERROR = "2002"
 
     # External service errors
-    LLM_ERROR = "3000"
     LLM_RATE_LIMIT = "3001"
 
 
@@ -53,7 +54,6 @@ RESPONSE_MESSAGES: dict[ResponseCode, str] = {
     ResponseCode.INTERNAL_ERROR: "An internal error occurred",
     ResponseCode.EMBEDDING_FAILED: "Failed to generate embeddings",
     ResponseCode.VECTOR_STORE_ERROR: "Vector store operation failed",
-    ResponseCode.LLM_ERROR: "LLM service error. Please try again",
     ResponseCode.LLM_RATE_LIMIT: "Rate limit exceeded. Please wait and retry",
 }
 
@@ -72,7 +72,6 @@ HTTP_STATUS_MAP: dict[ResponseCode, int] = {
     ResponseCode.INTERNAL_ERROR: 500,
     ResponseCode.EMBEDDING_FAILED: 500,
     ResponseCode.VECTOR_STORE_ERROR: 500,
-    ResponseCode.LLM_ERROR: 503,
     ResponseCode.LLM_RATE_LIMIT: 429,
 }
 
@@ -87,13 +86,13 @@ def get_http_status(code: ResponseCode) -> int:
     return HTTP_STATUS_MAP.get(code, 500)
 
 
-def create_success_response(
+def success_dict(
     code: ResponseCode,
     data: Any = None,
     custom_message: str | None = None,
     request_id: str | None = None,
 ) -> dict[str, Any]:
-    """Create a standardized success response."""
+    """Build a standardized success response dictionary."""
     return {
         "code": code.value,
         "success": True,
@@ -104,13 +103,13 @@ def create_success_response(
     }
 
 
-def create_error_response(
+def error_dict(
     code: ResponseCode,
     custom_message: str | None = None,
     error_details: dict[str, Any] | None = None,
     request_id: str | None = None,
 ) -> dict[str, Any]:
-    """Create a standardized error response."""
+    """Build a standardized error response dictionary."""
     return {
         "code": code.value,
         "success": False,
@@ -123,8 +122,6 @@ def create_error_response(
 
 # --- JSONResponse helpers ---
 
-from fastapi.responses import JSONResponse
-
 
 def success_response(
     code: ResponseCode,
@@ -133,7 +130,7 @@ def success_response(
 ) -> JSONResponse:
     """Create a JSONResponse with success format."""
     return JSONResponse(
-        content=create_success_response(code, data, request_id=request_id),
+        content=success_dict(code, data, request_id=request_id),
         status_code=get_http_status(code),
     )
 
@@ -145,7 +142,6 @@ def error_response(
 ) -> JSONResponse:
     """Create a JSONResponse with error format."""
     return JSONResponse(
-        content=create_error_response(code, custom_message, request_id=request_id),
+        content=error_dict(code, custom_message, request_id=request_id),
         status_code=get_http_status(code),
     )
-

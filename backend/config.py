@@ -4,11 +4,34 @@ Uses Pydantic Settings for fail-fast validation on startup.
 All required environment variables are validated at import time.
 """
 
+import logging
+import sys
 from functools import lru_cache
 from typing import Any
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def setup_logging(level: str = "INFO") -> None:
+    """Configure application logging.
+
+    Args:
+        level: Log level (DEBUG, INFO, WARNING, ERROR)
+    """
+    logging.basicConfig(
+        level=getattr(logging, level.upper()),
+        format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+        handlers=[logging.StreamHandler(sys.stdout)],
+    )
+
+    # Reduce noise from third-party libraries
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+    logging.getLogger("voyageai").setLevel(logging.WARNING)
+    logging.getLogger("anthropic").setLevel(logging.WARNING)
+    logging.getLogger("qdrant_client").setLevel(logging.WARNING)
 
 
 class Settings(BaseSettings):
@@ -78,7 +101,8 @@ class Settings(BaseSettings):
         default=10.0, description="Timeout for query analysis LLM call in seconds"
     )
     query_analysis_model: str = Field(
-        default="claude-sonnet-4-20250514", description="Model for query analysis (can differ from main LLM)"
+        default="claude-sonnet-4-20250514",
+        description="Model for query analysis (can differ from main LLM)",
     )
 
     # RAG Retrieval Settings
@@ -104,7 +128,9 @@ class Settings(BaseSettings):
     )
 
     # Session Settings
-    session_ttl_hours: int = Field(default=24, description="Session cookie TTL in hours")
+    session_ttl_hours: int = Field(
+        default=24, description="Session cookie TTL in hours"
+    )
 
     # Embedding Batch Settings
     embedding_batch_size: int = Field(
@@ -185,4 +211,3 @@ def get_app_config() -> dict[str, Any]:
 def get_cors_config() -> dict[str, Any]:
     """Get CORS middleware configuration."""
     return CORS_CONFIG.copy()
-

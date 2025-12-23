@@ -32,31 +32,26 @@ def _load_firebase_credentials(creds_value: str) -> dict:
     # Check if it's a file path
     if os.path.isfile(creds_value):
         logger.info("Loading Firebase credentials from file: %s", creds_value)
-        with open(creds_value, "r") as f:
+        with open(creds_value) as f:
             return json.load(f)
 
     # Try to parse as JSON string
     try:
         return json.loads(creds_value)
     except json.JSONDecodeError:
-        raise ValueError("FIREBASE_CREDENTIALS is neither valid JSON nor a valid file path")
+        raise ValueError(
+            "FIREBASE_CREDENTIALS is neither valid JSON nor a valid file path"
+        )
 
 
 class FirestoreService:
     """Service for managing chat history in Firestore."""
 
-    _instance: "FirestoreService | None" = None
     _initialized: bool = False
-    _creds_dict: dict | None = None
-
-    def __new__(cls) -> "FirestoreService":
-        """Singleton pattern for Firestore service."""
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-        return cls._instance
+    _instance: "FirestoreService | None" = None
 
     def __init__(self) -> None:
-        """Initialize Firestore client."""
+        """Initialize Firestore client (singleton pattern)."""
         if FirestoreService._initialized:
             return
 
@@ -65,7 +60,6 @@ class FirestoreService:
         try:
             # Load credentials
             creds_dict = _load_firebase_credentials(settings.firebase_credentials)
-            FirestoreService._creds_dict = creds_dict
 
             # Initialize firebase_admin if not already done
             if not firebase_admin._apps:
@@ -73,7 +67,9 @@ class FirestoreService:
                 firebase_admin.initialize_app(cred)
 
             # Create google-auth credentials for AsyncClient
-            gcp_credentials = service_account.Credentials.from_service_account_info(creds_dict)
+            gcp_credentials = service_account.Credentials.from_service_account_info(
+                creds_dict
+            )
 
             # Create AsyncClient with explicit credentials and project
             self.db: AsyncClient = AsyncClient(
@@ -104,7 +100,10 @@ class FirestoreService:
             }
 
             doc_ref = (
-                self.db.collection("sessions").document(session_id).collection("messages").document()
+                self.db.collection("sessions")
+                .document(session_id)
+                .collection("messages")
+                .document()
             )
 
             await doc_ref.set(message_data)
@@ -115,7 +114,9 @@ class FirestoreService:
             logger.error("Failed to add message: %s", e)
             raise
 
-    async def get_messages(self, session_id: str, limit: int = 10) -> list[dict[str, Any]]:
+    async def get_messages(
+        self, session_id: str, limit: int = 10
+    ) -> list[dict[str, Any]]:
         """Get recent messages from chat history."""
         try:
             messages_ref = (
@@ -141,19 +142,23 @@ class FirestoreService:
 
         except Exception as e:
             logger.error("Failed to get messages: %s", e)
-            return []
+            raise  # Don't swallow errors
 
     async def get_message_count(self, session_id: str) -> int:
         """Get total message count for a session."""
         try:
-            messages_ref = self.db.collection("sessions").document(session_id).collection("messages")
+            messages_ref = (
+                self.db.collection("sessions")
+                .document(session_id)
+                .collection("messages")
+            )
             count_query = messages_ref.count()
             result = await count_query.get()
             return result[0][0].value if result else 0
 
         except Exception as e:
             logger.error("Failed to get message count: %s", e)
-            return 0
+            raise  # Don't swallow errors
 
     async def get_or_create_summary(self, session_id: str) -> str | None:
         """Get existing summary for a session."""
@@ -169,7 +174,7 @@ class FirestoreService:
 
         except Exception as e:
             logger.error("Failed to get summary: %s", e)
-            return None
+            raise  # Don't swallow errors
 
     async def save_summary(self, session_id: str, summary: str) -> None:
         """Save a conversation summary."""
@@ -188,7 +193,11 @@ class FirestoreService:
     async def clear_history(self, session_id: str) -> int:
         """Clear all messages for a session."""
         try:
-            messages_ref = self.db.collection("sessions").document(session_id).collection("messages")
+            messages_ref = (
+                self.db.collection("sessions")
+                .document(session_id)
+                .collection("messages")
+            )
             docs = await messages_ref.get()
             deleted_count = 0
 
@@ -205,7 +214,9 @@ class FirestoreService:
                 await batch.commit()
 
             session_ref = self.db.collection("sessions").document(session_id)
-            await session_ref.set({"summary": None, "summary_updated_at": None}, merge=True)
+            await session_ref.set(
+                {"summary": None, "summary_updated_at": None}, merge=True
+            )
 
             logger.info("Cleared %d messages for session %s", deleted_count, session_id)
             return deleted_count
@@ -233,14 +244,16 @@ class FirestoreService:
             if summary:
                 context_parts.append(f"[Previous conversation summary]\n{summary}")
 
-            context_parts.append(f"[Recent messages ({len(messages)} of {message_count} total)]")
+            context_parts.append(
+                f"[Recent messages ({len(messages)} of {message_count} total)]"
+            )
             context_parts.append(self._format_messages_for_context(messages))
 
             return "\n\n".join(context_parts)
 
         except Exception as e:
             logger.error("Failed to build chat context: %s", e)
-            return ""
+            raise  # Don't swallow errors
 
     def _format_messages_for_context(self, messages: list[dict[str, Any]]) -> str:
         """Format messages into a context string."""
@@ -282,9 +295,11 @@ class FirestoreService:
 
         except Exception as e:
             logger.error("Failed to get sessions: %s", e)
-            return []
+            raise  # Don't swallow errors
 
-    async def create_session(self, session_id: str, title: str = "New Chat") -> dict[str, Any]:
+    async def create_session(
+        self, session_id: str, title: str = "New Chat"
+    ) -> dict[str, Any]:
         """Create a new session."""
         try:
             session_ref = self.db.collection("sessions").document(session_id)
@@ -307,7 +322,9 @@ class FirestoreService:
             logger.error("Failed to create session: %s", e)
             raise
 
-    async def update_session_activity(self, session_id: str, first_message: str | None = None) -> None:
+    async def update_session_activity(
+        self, session_id: str, first_message: str | None = None
+    ) -> None:
         """Update session's last activity and optionally set title from first message."""
         try:
             session_ref = self.db.collection("sessions").document(session_id)
@@ -335,6 +352,7 @@ class FirestoreService:
 
         except Exception as e:
             logger.error("Failed to update session activity: %s", e)
+            raise  # Don't swallow errors
 
     async def delete_session(self, session_id: str) -> bool:
         """Delete a session and all its messages."""
@@ -372,4 +390,3 @@ def get_firestore_service() -> FirestoreService:
     FirestoreService already implements singleton pattern internally.
     """
     return FirestoreService()
-

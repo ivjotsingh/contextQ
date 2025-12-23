@@ -24,6 +24,7 @@ except ImportError:
     voyageai = None
 
 from config import get_settings
+from services.embedding_cache import EmbeddingCache
 
 logger = logging.getLogger(__name__)
 
@@ -53,12 +54,15 @@ class EmbeddingService:
             )
 
         self.settings = get_settings()
-        # WARNING: This mutates global state. See module docstring.
-        voyageai.api_key = self.settings.voyage_api_key
-        self.client = voyageai.Client()
+        # Pass API key directly to client instead of mutating global state
+        self.client = voyageai.Client(api_key=self.settings.voyage_api_key)
         self.model = self.settings.embedding_model
         self.dimensions = self.settings.embedding_dimensions
         self.batch_size = self.settings.embedding_batch_size
+
+        # Initialize cache
+        self._cache = EmbeddingCache(max_size=10000)
+        logger.info("Embedding cache initialized (max_size=10000)")
 
     async def embed_texts(
         self,
@@ -78,7 +82,6 @@ class EmbeddingService:
             EmbeddingError: If embedding generation fails after retries.
             ValueError: If texts is None.
         """
-        import asyncio
 
         if texts is None:
             raise ValueError("texts cannot be None")
@@ -90,11 +93,7 @@ class EmbeddingService:
 
         for i in range(0, len(texts), self.batch_size):
             batch = texts[i : i + self.batch_size]
-            # Note: _embed_batch_sync uses time.sleep for retry backoff,
-            # which blocks the thread pool thread. See module docstring.
-            batch_embeddings = await asyncio.to_thread(
-                self._embed_batch_sync, batch, retry_count
-            )
+            batch_embeddings = await self._embed_batch_async(batch, retry_count)
             all_embeddings.extend(batch_embeddings)
 
         return all_embeddings
@@ -116,27 +115,42 @@ class EmbeddingService:
         if not text:
             raise ValueError("text cannot be empty")
 
-        embeddings = await self.embed_texts([text], retry_count)
-        return embeddings[0]
+        # Check cache first
+        cached = self._cache.get(text)
+        if cached is not None:
+            return cached
 
-    def _embed_batch_sync(
+        embeddings = await self.embed_texts([text], retry_count)
+        embedding = embeddings[0]
+
+        # Cache the result
+        self._cache.set(text, embedding)
+
+        return embedding
+
+    async def _embed_batch_async(
         self,
         texts: list[str],
         retry_count: int,
     ) -> list[list[float]]:
-        """Generate embeddings for a batch of texts with retry logic.
+        """Generate embeddings for a batch of texts with async retry logic.
 
-        Note: Uses time.sleep() for backoff, which blocks the thread.
-        This is acceptable since this runs in asyncio.to_thread().
+        Uses asyncio.sleep() for non-blocking backoff instead of time.sleep().
         """
+        import asyncio
+
         last_error: Exception | None = None
         backoff_times = [1, 2, 4]
 
         for attempt in range(retry_count):
             try:
                 start_time = time.time()
-                result = self.client.embed(
-                    texts, model=self.model, input_type="document"
+                # Run blocking API call in thread pool
+                result = await asyncio.to_thread(
+                    self.client.embed,
+                    texts,
+                    model=self.model,
+                    input_type="document",
                 )
                 elapsed = time.time() - start_time
                 logger.debug("Generated %d embeddings in %.2fs", len(texts), elapsed)
@@ -144,6 +158,11 @@ class EmbeddingService:
 
             except Exception as e:
                 last_error = e
+                # Sanitize error message to avoid leaking API keys
+                error_msg = str(e)
+                if "api" in error_msg.lower() or "key" in error_msg.lower():
+                    error_msg = f"{type(e).__name__}: [redacted - may contain API key]"
+
                 error_str = str(e).lower()
                 is_rate_limit = "rate limit" in error_str or "429" in error_str
 
@@ -158,13 +177,14 @@ class EmbeddingService:
                         )
                     else:
                         logger.warning(
-                            "API error: %s. Retrying in %ds (%d/%d)",
-                            e,
+                            "Embedding API error: %s. Retrying in %ds (%d/%d)",
+                            error_msg,  # Use sanitized message
                             wait_time,
                             attempt + 1,
                             retry_count,
                         )
-                    time.sleep(wait_time)
+                    # Use async sleep instead of blocking time.sleep()
+                    await asyncio.sleep(wait_time)
                 else:
                     logger.error(
                         "Embedding generation failed after %d attempts: %s",
@@ -180,22 +200,11 @@ class EmbeddingService:
         """Get information about the embedding configuration.
 
         Returns:
-            Dict with model, dimensions, and batch_size.
+            Dict with model, dimensions, batch_size, and cache stats.
         """
         return {
             "model": self.model,
             "dimensions": self.dimensions,
             "batch_size": self.batch_size,
+            "cache": self._cache.get_stats(),
         }
-
-
-# Lazy singleton
-_embedding_service: EmbeddingService | None = None
-
-
-def get_embedding_service() -> EmbeddingService:
-    """Get embedding service singleton."""
-    global _embedding_service
-    if _embedding_service is None:
-        _embedding_service = EmbeddingService()
-    return _embedding_service

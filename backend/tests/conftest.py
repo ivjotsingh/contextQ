@@ -19,7 +19,6 @@ def mock_settings():
     settings.qdrant_url = "http://localhost:6333"
     settings.qdrant_api_key = "test-qdrant-key"
     settings.qdrant_collection = "test_documents"
-    settings.redis_url = "redis://localhost:6379"
     settings.environment = "test"
     settings.debug = True
     settings.max_file_size_mb = 10
@@ -27,16 +26,14 @@ def mock_settings():
     settings.max_chunks_per_doc = 500
     settings.chunk_size = 1500
     settings.chunk_overlap = 200
-    settings.embedding_model = "text-embedding-3-small"
-    settings.embedding_dimensions = 1536
+    settings.embedding_model = "voyage-3-lite"
+    settings.embedding_dimensions = 512
     settings.llm_model = "claude-sonnet-4-20250514"
     settings.retrieval_top_k = 5
     settings.llm_temperature = 0.2
     settings.llm_max_tokens = 2048
-    settings.embedding_cache_ttl = 86400
-    settings.response_cache_ttl = 3600
-    settings.session_ttl = 86400
     settings.embedding_batch_size = 64
+    settings.session_ttl_hours = 24
     return settings
 
 
@@ -44,8 +41,8 @@ def mock_settings():
 def mock_embedding_service():
     """Mock embedding service."""
     service = AsyncMock()
-    service.embed_text.return_value = [0.1] * 1536
-    service.embed_texts.return_value = [[0.1] * 1536]
+    service.embed_text.return_value = [0.1] * 512
+    service.embed_texts.return_value = [[0.1] * 512]
     return service
 
 
@@ -73,22 +70,6 @@ def mock_vector_store():
 
 
 @pytest.fixture
-def mock_cache_service():
-    """Mock cache service."""
-    service = AsyncMock()
-    service.get_embedding.return_value = None
-    service.set_embedding.return_value = True
-    service.get_response.return_value = None
-    service.set_response.return_value = True
-    service.get_session_doc_ids.return_value = ["test-doc-id"]
-    service.add_document_to_session.return_value = True
-    service.remove_document_from_session.return_value = True
-    service.invalidate_document_cache.return_value = 0
-    service.health_check.return_value = {"status": "healthy", "latency_ms": 5}
-    return service
-
-
-@pytest.fixture
 def sample_pdf_content():
     """Sample PDF text content for testing."""
     return """
@@ -110,8 +91,8 @@ def sample_pdf_content():
     
     Chapter 3: Architecture
     
-    The system uses FastAPI for the backend, React for the frontend, Qdrant
-    for vector storage, and Redis for caching.
+    The system uses FastAPI for the backend, React for the frontend, and Qdrant
+    for vector storage.
     """
 
 

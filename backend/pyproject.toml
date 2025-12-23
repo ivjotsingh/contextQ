@@ -14,9 +14,9 @@ dependencies = [
     "anthropic>=0.40.0",
     "voyageai>=0.2.0",
     "qdrant-client>=1.12.0",
-    "redis>=5.2.0",
     "pymupdf>=1.25.0",
     "python-docx>=1.1.0",
+    "firebase-admin>=6.5.0",
     "python-dotenv>=1.0.0",
     "httpx>=0.28.0",
 ]
@@ -38,7 +38,12 @@ exclude = [".venv", ".git", "__pycache__", "uploads"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP", "B", "C4", "SIM"]
-ignore = ["E501"]
+ignore = [
+    "E501",  # Line too long (handled by formatter)
+    "B008",  # Function call in argument defaults (FastAPI Depends pattern)
+    "B904",  # Exception chaining (raise ... from)
+    "W293",  # Blank line contains whitespace
+]
 
 [tool.ruff.lint.isort]
 known-first-party = ["app"]
