@@ -541,6 +541,40 @@ data: {"type":"done"}
 
 ---
 
+## 🔮 Future Improvements
+
+### Out of Scope for This Project
+
+**RAG & Retrieval Enhancements:**
+- **Hybrid search** — Combine BM25 (keyword) + vector (semantic) for best results
+- **Semantic chunking** — Chunk by meaning instead of fixed size
+- **Multi-modal support** — Extract and search images/charts from PDFs
+
+**Production Infrastructure:**
+- **Caching layer** — Redis for embeddings, responses, and hot documents
+- **Cost tracking** — Real-time API cost monitoring with budget alerts
+
+**Security & Compliance:**
+- **Authentication** — User accounts with JWT, role-based access control
+- **Document-level permissions** — Multi-tenant isolation, access control lists
+- **Output validation** — PII detection, toxic content filtering
+- **GDPR compliance** — Right to delete, data export
+
+**User Experience:**
+- **OCR support** — Scanned PDFs via pytesseract or AWS Textract
+- **Multi-language** — i18n for global users
+- **Export functionality** — Chat history to PDF/Markdown
+- **Document annotations** — Highlight and note passages
+- **Voice input/output** — Speech-to-text queries, text-to-speech answers
+- **Collaborative Q&A** — Multiple users asking about shared documents
+
+**Advanced Features:**
+- **Document versioning** — Track changes, compare versions
+- **Usage analytics** — User behavior insights, popular queries
+- **Smart suggestions** — Recommend related questions based on context
+
+---
+
 ## 🤝 Acknowledgments
 
 Built using industry-best practices from:
