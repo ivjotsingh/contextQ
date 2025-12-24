@@ -1,0 +1,320 @@
+"""POST /chat - Stream chat response.
+
+Orchestrates the chat flow:
+1. Get chat history context
+2. Analyze query (skip RAG? decompose?)
+3. Route to RAG or general response
+4. Stream response
+5. Save to chat history
+"""
+
+import asyncio
+import json
+import logging
+import uuid
+from collections.abc import AsyncGenerator
+from dataclasses import dataclass
+from typing import Any
+
+from anthropic import APITimeoutError
+from fastapi import Cookie, Depends
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
+
+from apps.chat.chat_history import ChatHistoryManager
+from config import get_settings
+from dependencies import get_chat_history_manager, get_rag_service
+from llm.prompts import (
+    ASSISTANT_SYSTEM_PROMPT,
+    QUERY_ANALYSIS_PROMPT,
+    QUERY_ANALYSIS_SCHEMA,
+    QUERY_ANALYSIS_SYSTEM_PROMPT,
+)
+from llm.service import LLMService
+from services import RAGService
+
+logger = logging.getLogger(__name__)
+
+
+# --- Request Schema ---
+
+
+class ChatRequest(BaseModel):
+    """Request body for chat endpoint."""
+
+    message: str = Field(
+        ...,
+        min_length=1,
+        max_length=2000,
+        description="User's message or question",
+    )
+    doc_ids: list[str] | None = Field(
+        None,
+        description="Optional: specific document IDs to search. If None, searches all.",
+    )
+
+
+# --- Query Analyzer (private to this handler) ---
+
+
+@dataclass
+class _QueryAnalysis:
+    """Result of query analysis."""
+
+    skip_rag: bool
+    needs_decomposition: bool
+    sub_queries: list[str]
+    reasoning: str = ""
+
+
+class _QueryAnalyzer:
+    """Analyzes queries to determine routing (RAG vs general)."""
+
+    def __init__(self) -> None:
+        settings = get_settings()
+        self._llm = LLMService()
+        self._max_sub_queries = settings.max_sub_queries
+        self._timeout = settings.query_analysis_timeout
+        self._model = settings.query_analysis_model
+
+    async def analyze(
+        self,
+        message: str,
+        chat_history: str = "",
+    ) -> _QueryAnalysis:
+        """Analyze query to determine routing.
+
+        Uses the query text and chat history to decide:
+        1. skip_rag - Is this a greeting/meta question?
+        2. needs_decomposition - Does this compare multiple docs?
+        """
+        # Fast path: very short = likely greeting
+        words = message.split()
+        if len(words) <= 2:
+            lower = message.lower().strip()
+            if lower in ("hi", "hello", "hey", "help", "?", "thanks", "thank you"):
+                return _QueryAnalysis(
+                    skip_rag=True,
+                    needs_decomposition=False,
+                    sub_queries=[],
+                    reasoning="Greeting detected",
+                )
+
+        # Use LLM for analysis (with chat history context)
+        try:
+            chat_history_section = (
+                f"Recent chat history:\n{chat_history}"
+                if chat_history
+                else "No prior chat history."
+            )
+
+            prompt = QUERY_ANALYSIS_PROMPT.format(
+                question=message,
+                chat_history_section=chat_history_section,
+                max_sub_queries=self._max_sub_queries,
+            )
+
+            result = await asyncio.wait_for(
+                self._llm.generate_with_tool(
+                    prompt=prompt,
+                    system=QUERY_ANALYSIS_SYSTEM_PROMPT,
+                    tool_name="analyze_query",
+                    tool_schema=QUERY_ANALYSIS_SCHEMA,
+                    model=self._model,
+                    temperature=0,
+                    max_tokens=500,
+                ),
+                timeout=self._timeout,
+            )
+
+            skip_rag = result.get("skip_rag", False)
+            needs_decomposition = result.get("needs_decomposition", False)
+            sub_queries = result.get("sub_queries", [])[: self._max_sub_queries]
+            reasoning = result.get("reasoning", "")
+
+            # Validate sub-queries
+            sub_queries = [
+                sq.strip()[:500]
+                for sq in sub_queries
+                if isinstance(sq, str) and sq.strip()
+            ]
+
+            if needs_decomposition and not sub_queries:
+                needs_decomposition = False
+
+            return _QueryAnalysis(
+                skip_rag=skip_rag,
+                needs_decomposition=needs_decomposition,
+                sub_queries=sub_queries,
+                reasoning=reasoning,
+            )
+
+        except (TimeoutError, APITimeoutError) as e:
+            logger.warning("Query analysis timed out: %s", e)
+            return _QueryAnalysis(
+                skip_rag=False,
+                needs_decomposition=False,
+                sub_queries=[],
+                reasoning="Analysis timed out",
+            )
+
+        except Exception as e:
+            logger.warning("Query analysis failed: %s", e)
+            return _QueryAnalysis(
+                skip_rag=False,
+                needs_decomposition=False,
+                sub_queries=[],
+                reasoning=f"Analysis error: {e}",
+            )
+
+
+# --- General Response Generator ---
+
+
+async def _stream_general_response(
+    message: str,
+    chat_history: str,
+) -> AsyncGenerator[dict[str, Any], None]:
+    """Stream a general (non-RAG) response."""
+    llm = LLMService()
+
+    yield {"type": "sources", "sources": []}
+
+    history_section = (
+        f"CONVERSATION HISTORY:\n{chat_history}\n\n" if chat_history else ""
+    )
+    prompt = f"{history_section}User message: {message}"
+
+    answer_parts: list[str] = []
+    async for chunk in llm.stream(prompt, ASSISTANT_SYSTEM_PROMPT, temperature=0.7):
+        answer_parts.append(chunk)
+        yield {"type": "content", "content": chunk}
+
+    full_answer = "".join(answer_parts)
+    yield {"type": "done", "full_answer": full_answer, "sources": []}
+
+
+# --- Handler ---
+
+
+async def stream_response(
+    request: ChatRequest,
+    session_id: str | None = Cookie(default=None),
+    rag_service: RAGService = Depends(get_rag_service),
+    chat_history_mgr: ChatHistoryManager = Depends(get_chat_history_manager),
+) -> StreamingResponse:
+    """Stream a chat response.
+
+    Orchestrates:
+    1. Prepare context and analyze query
+    2. Route to appropriate response generator
+    3. Stream response
+    4. Save to chat history
+
+    Returns Server-Sent Events (SSE) stream.
+    """
+    if not session_id:
+        session_id = str(uuid.uuid4())
+
+    request_id = str(uuid.uuid4())[:8]
+    logger.info("[%s] Chat: %s", request_id, request.message[:100])
+
+    # --- Prepare context ---
+    chat_history = await chat_history_mgr.get_context(session_id)
+    await chat_history_mgr.save_user_message(session_id, request.message)
+
+    # --- Fast path: Skip LLM analysis for simple greetings ---
+    simple_greetings = {"hi", "hello", "hey", "help", "?", "thanks", "thank you"}
+    message_lower = request.message.lower().strip()
+    is_simple_greeting = (
+        len(request.message.split()) <= 2 and message_lower in simple_greetings
+    )
+
+    if is_simple_greeting:
+        # No LLM call needed - go straight to response
+        analysis = _QueryAnalysis(
+            skip_rag=True,
+            needs_decomposition=False,
+            sub_queries=[],
+            reasoning="Simple greeting (fast path)",
+        )
+        logger.debug("[%s] Fast path: greeting detected, skipping analysis", request_id)
+    else:
+        # Full LLM analysis for complex queries
+        analyzer = _QueryAnalyzer()
+        analysis = await analyzer.analyze(request.message, chat_history)
+        logger.debug(
+            "[%s] Analysis: skip_rag=%s, decompose=%s",
+            request_id,
+            analysis.skip_rag,
+            analysis.needs_decomposition,
+        )
+
+    # --- Fetch docs only if RAG is needed ---
+    doc_ids: list[str] = []
+    if not analysis.skip_rag:
+        docs = await rag_service.get_session_documents(session_id)
+        doc_ids = [d.doc_id for d in docs]
+
+    # --- SSE Generator (streaming only) ---
+    async def generate_sse_events():
+        try:
+            full_answer = ""
+            sources = []
+
+            if analysis.skip_rag:
+                # General response (no RAG)
+                async for chunk in _stream_general_response(
+                    request.message, chat_history
+                ):
+                    if chunk.get("type") == "done":
+                        full_answer = chunk.get("full_answer", "")
+                        sources = chunk.get("sources", [])
+                    else:
+                        yield f"data: {json.dumps(chunk)}\n\n"
+
+            elif not doc_ids:
+                # No documents uploaded
+                no_docs_msg = "No documents have been uploaded yet. Please upload some documents first."
+                yield f"data: {json.dumps({'type': 'sources', 'sources': []})}\n\n"
+                yield f"data: {json.dumps({'type': 'content', 'content': no_docs_msg})}\n\n"
+                full_answer = no_docs_msg
+
+            else:
+                # RAG response
+                async for chunk in rag_service.retrieve_and_generate(
+                    message=request.message,
+                    session_id=session_id,
+                    chat_history=chat_history,
+                    doc_ids=request.doc_ids or doc_ids,
+                    sub_queries=analysis.sub_queries
+                    if analysis.needs_decomposition
+                    else None,
+                ):
+                    if chunk.get("type") == "done":
+                        full_answer = chunk.get("full_answer", "")
+                        sources = chunk.get("sources", [])
+                    else:
+                        yield f"data: {json.dumps(chunk)}\n\n"
+
+            # Save assistant response
+            await chat_history_mgr.save_assistant_message(
+                session_id, full_answer, sources
+            )
+            await chat_history_mgr.maybe_generate_summary(session_id)
+
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+
+        except Exception as e:
+            logger.exception("[%s] Stream error", request_id)
+            yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
+
+    return StreamingResponse(
+        generate_sse_events(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Request-ID": request_id,
+        },
+    )

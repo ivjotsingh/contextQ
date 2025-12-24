@@ -73,3 +73,11 @@ async def list_documents(
             status_code=500,
             detail=error_dict(ResponseCode.VECTOR_STORE_ERROR, str(e)),
         )
+    except Exception as e:
+        logger.exception("Failed to list documents")
+        raise HTTPException(
+            status_code=500,
+            detail=error_dict(
+                ResponseCode.INTERNAL_ERROR, f"Failed to list documents: {e}"
+            ),
+        )

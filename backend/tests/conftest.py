@@ -33,7 +33,6 @@ def mock_settings():
     settings.debug = True
     settings.max_file_size_mb = 10
     settings.max_file_size_bytes = 10 * 1024 * 1024
-    settings.max_chunks_per_doc = 500
     settings.chunk_size = 1500
     settings.chunk_overlap = 200
     settings.embedding_model = "voyage-3-lite"

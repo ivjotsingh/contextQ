@@ -60,18 +60,6 @@ class EmbeddingCache:
         key = self._get_key(text)
         self._cache[key] = embedding
 
-    def get_stats(self) -> dict:
-        """Get cache statistics."""
-        total = self.hits + self.misses
-        hit_rate = (self.hits / total * 100) if total > 0 else 0
-        return {
-            "size": len(self._cache),
-            "max_size": self.max_size,
-            "hits": self.hits,
-            "misses": self.misses,
-            "hit_rate": f"{hit_rate:.1f}%",
-        }
-
 
 class EmbeddingError(Exception):
     """Raised when embedding generation fails."""

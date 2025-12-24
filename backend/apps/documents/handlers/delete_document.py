@@ -42,3 +42,7 @@ async def delete_document(
     except VectorStoreError as e:
         logger.error("[%s] Delete error: %s", request_id, e)
         return error_response(ResponseCode.VECTOR_STORE_ERROR, str(e), request_id)
+
+    except Exception as e:
+        logger.exception("[%s] Unexpected error deleting document", request_id)
+        return error_response(ResponseCode.INTERNAL_ERROR, str(e), request_id)

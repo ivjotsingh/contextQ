@@ -95,13 +95,13 @@ class DocumentParser:
 
         if file_size > self.settings.max_file_size_bytes:
             raise FileTooLargeError(
-                f"File size {file_size} exceeds limit of {self.settings.max_file_size_mb}MB"
+                f"File is too large. Maximum size is {self.settings.max_file_size_mb} MB."
             )
 
         ext = Path(filename).suffix.lower()
         if ext not in SUPPORTED_EXTENSIONS:
             raise UnsupportedFileTypeError(
-                f"File type '{ext}' not supported. Supported: {', '.join(sorted(SUPPORTED_EXTENSIONS))}"
+                f"'{ext}' files are not supported. Please upload PDF, DOCX, or TXT files."
             )
 
         return ext
@@ -130,7 +130,9 @@ class DocumentParser:
 
             text = result.get("text", "").strip()
             if not text:
-                raise EmptyDocumentError("Document contains no extractable text")
+                raise EmptyDocumentError(
+                    "This document appears to be empty or we couldn't extract any text from it."
+                )
 
             text = self._normalize_text(text)
             result["text"] = text

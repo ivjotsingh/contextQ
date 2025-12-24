@@ -70,7 +70,6 @@ class Settings(BaseSettings):
 
     # Document Processing Limits
     max_file_size_mb: int = Field(default=10, description="Max upload size in MB")
-    max_chunks_per_doc: int = Field(default=500, description="Max chunks per document")
     chunk_size: int = Field(default=1500, description="Target chunk size in chars")
     chunk_overlap: int = Field(default=200, description="Chunk overlap in chars")
 

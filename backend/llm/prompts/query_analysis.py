@@ -1,28 +1,32 @@
 """Prompt and schema for query analysis and decomposition."""
 
 # System prompt for the query analyzer
-QUERY_ANALYSIS_SYSTEM_PROMPT = "You are a query analyzer for a document Q&A system."
+QUERY_ANALYSIS_SYSTEM_PROMPT = """You are a query analyzer for a document Q&A system.
+Analyze user queries to determine if they need document lookup and if they span multiple documents."""
 
 # User prompt template for query analysis
-# Placeholders: {doc_names_str}, {question}, {max_sub_queries}
+# Placeholders: {question}, {chat_history}, {max_sub_queries}
 QUERY_ANALYSIS_PROMPT = """Analyze this user question for a document Q&A system.
 
-Available documents: {doc_names_str}
 User question: {question}
+
+{chat_history_section}
 
 Determine:
 1. If this is a GENERAL question that doesn't need document lookup (skip_rag=true)
-   - Greetings: "hello", "hi", "hey"
+   - Greetings: "hello", "hi", "hey", "thanks"
    - Meta questions: "what can you do", "who are you", "help me"
    - General knowledge that wouldn't be in uploaded documents
 
-2. If it requires information from multiple documents (needs_decomposition=true)
+2. If it requires information from MULTIPLE documents (needs_decomposition=true)
+   Based on the question and chat history, detect:
    - Comparison: "compare", "difference", "vs", "between", "which one"
    - Synthesis: "combine", "together", "both", "all documents"
-   - Overview: "what are the documents about", "summarize all", "overview"
-   - Cross-reference: "based on X, what about Y"
-   - If yes, generate up to {max_sub_queries} sub-queries targeting specific documents
-   - For overview questions, generate ONE sub-query per document"""
+   - Overview: "summarize all", "overview of documents"
+   - Cross-reference: mentions multiple document names or topics
+   
+   If decomposition needed, generate up to {max_sub_queries} sub-queries.
+   Each sub-query should target a specific document or topic mentioned."""
 
 
 # JSON schema for structured output via tool_use
@@ -35,7 +39,7 @@ QUERY_ANALYSIS_SCHEMA = {
         },
         "needs_decomposition": {
             "type": "boolean",
-            "description": "True if question requires multiple document queries (comparison, overview)",
+            "description": "True if question requires multiple document queries (comparison, cross-reference)",
         },
         "reasoning": {
             "type": "string",

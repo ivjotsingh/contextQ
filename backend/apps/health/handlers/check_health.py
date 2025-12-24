@@ -39,7 +39,11 @@ async def check_health() -> HealthResponse:
     settings = get_settings()
     vector_store = get_vector_store()
 
-    qdrant_health = await vector_store.health_check()
+    # Check Qdrant with error handling
+    try:
+        qdrant_health = await vector_store.health_check()
+    except Exception as e:
+        qdrant_health = {"status": "unhealthy", "error": str(e)}
 
     services = [
         ServiceStatus(
