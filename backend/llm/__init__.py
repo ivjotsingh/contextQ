@@ -3,32 +3,35 @@
 Usage:
     from llm import LLMService, LLMError
 
-    # Create service with specific model
-    llm = LLMService(model="claude-sonnet-4-20250514")
-
-    # Generate response
+    llm = LLMService()
     response = await llm.generate(prompt, system)
 
-    # Stream response
     async for chunk in llm.stream(prompt, system):
         print(chunk, end="")
 
-    # Or later with different model (future)
-    # llm = LLMService(model="gpt-4")  # Would use OpenAI client
+Structure:
+    - base.py: Abstract interface (BaseLLMService)
+    - anthropic.py: Claude implementation (AnthropicService)
+    - service.py: Alias to current provider (LLMService = AnthropicService)
 """
 
-from llm.service import LLMService, LLMError
+from llm.anthropic import AnthropicService
+from llm.base import BaseLLMService, LLMError
 from llm.prompts import (
-    DOCUMENT_QA_SYSTEM_PROMPT,
     ASSISTANT_SYSTEM_PROMPT,
+    DOCUMENT_QA_SYSTEM_PROMPT,
     QUERY_ANALYSIS_PROMPT,
 )
 
+# Default provider - can be swapped by changing this alias
+LLMService = AnthropicService
+
 __all__ = [
+    "BaseLLMService",
     "LLMService",
     "LLMError",
+    "AnthropicService",
     "DOCUMENT_QA_SYSTEM_PROMPT",
     "ASSISTANT_SYSTEM_PROMPT",
     "QUERY_ANALYSIS_PROMPT",
 ]
-

@@ -1,27 +1,45 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { api } from '../api';
-import { Session } from '../types';
+
+interface Chat {
+    id: string;
+    title: string;
+    created_at: string;
+    last_activity: string;
+    message_count: number;
+}
 
 /**
- * Custom hook for managing chat sessions
+ * Custom hook for managing chats within a session
  * 
- * FIX: Using API client
- * FIX: Fixed useEffect dependency issue
+ * session_id is handled via cookie (browser identity)
+ * chat_id is tracked in state (conversation identity)
  */
-export function useSessions() {
-    const [sessions, setSessions] = useState<Session[]>([]);
-    const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+export function useChats() {
+    const [chats, setChats] = useState<Chat[]>([]);
+    const [currentChatId, setCurrentChatId] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const loadedRef = useRef(false);
 
     /**
-     * Load sessions from server
+     * Load chats from server
      */
-    const loadSessions = useCallback(async () => {
+    const loadChats = useCallback(async () => {
         try {
-            const data: any = await api.getSessions();
-            setSessions(data.sessions || []);
-            setCurrentSessionId(data.current_session_id);
+            const data: any = await api.getChats();
+            const loadedChats = data.chats || [];
+            setChats(loadedChats);
+
+            // If we have chats, select the first one
+            if (loadedChats.length > 0) {
+                setCurrentChatId(loadedChats[0].id);
+            } else {
+                // No chats exist - create one automatically
+                const newChatData: any = await api.createChat();
+                const newChat = newChatData.data;
+                setChats([newChat]);
+                setCurrentChatId(newChat.id);
+            }
         } catch (err) {
             // Non-critical
         } finally {
@@ -30,88 +48,87 @@ export function useSessions() {
     }, []);
 
     /**
-     * Load sessions on mount
+     * Load chats on mount
      */
     useEffect(() => {
         if (loadedRef.current) return;
         loadedRef.current = true;
-        loadSessions();
-    }, [loadSessions]);
+        loadChats();
+    }, [loadChats]);
 
     /**
-     * Create a new session
+     * Create a new chat
      */
-    const createSession = useCallback(async () => {
+    const createChat = useCallback(async () => {
         try {
-            const data: any = await api.createSession();
-            const newSession = data.data;
+            const data: any = await api.createChat();
+            const newChat = data.data;
 
-            setSessions(prev => [newSession, ...prev]);
-            setCurrentSessionId(newSession.id);
+            setChats(prev => [newChat, ...prev]);
+            setCurrentChatId(newChat.id);
 
-            return newSession;
+            return newChat;
         } catch (err) {
             throw err;
         }
     }, []);
 
     /**
-     * Switch to a different session
+     * Switch to a different chat (client-side only)
      */
-    const switchSession = useCallback(async (sessionId: string) => {
-        if (sessionId === currentSessionId) return true;
-
-        try {
-            await api.switchSession(sessionId);
-            setCurrentSessionId(sessionId);
-            return true;
-        } catch (err) {
-            return false;
-        }
-    }, [currentSessionId]);
+    const switchChat = useCallback((chatId: string) => {
+        if (chatId === currentChatId) return;
+        setCurrentChatId(chatId);
+    }, [currentChatId]);
 
     /**
-     * Delete a session
+     * Delete a chat
      */
-    const deleteSession = useCallback(async (sessionId: string) => {
+    const deleteChat = useCallback(async (chatId: string) => {
         try {
-            await api.deleteSession(sessionId);
+            await api.deleteChat(chatId);
 
             // Remove from local state
-            setSessions(prev => prev.filter(s => s.id !== sessionId));
+            setChats(prev => prev.filter(c => c.id !== chatId));
 
-            // If we deleted the current session, reload to get new session
-            if (sessionId === currentSessionId) {
-                await loadSessions();
+            // If we deleted the current chat, select another or create new
+            if (chatId === currentChatId) {
+                const remaining = chats.filter(c => c.id !== chatId);
+                if (remaining.length > 0) {
+                    setCurrentChatId(remaining[0].id);
+                } else {
+                    // Create a new chat
+                    await createChat();
+                }
             }
 
             return true;
         } catch (err) {
             return false;
         }
-    }, [currentSessionId, loadSessions]);
+    }, [currentChatId, chats, createChat]);
 
     /**
-     * Refresh sessions (e.g., after sending a message)
+     * Refresh chats
      */
-    const refreshSessions = useCallback(async () => {
+    const refreshChats = useCallback(async () => {
         try {
-            const data: any = await api.getSessions();
-            setSessions(data.sessions || []);
+            const data: any = await api.getChats();
+            setChats(data.chats || []);
         } catch (err) {
             // Non-critical
         }
     }, []);
 
     return {
-        sessions,
-        currentSessionId,
+        chats,
+        currentChatId,
         isLoading,
-        createSession,
-        switchSession,
-        deleteSession,
-        refreshSessions,
+        createChat,
+        switchChat,
+        deleteChat,
+        refreshChats,
     };
 }
 
-export default useSessions;
+export default useChats;

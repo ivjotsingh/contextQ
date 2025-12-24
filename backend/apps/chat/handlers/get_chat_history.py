@@ -1,9 +1,8 @@
-"""GET /chat/history - Get chat history for session."""
+"""GET /chat/history - Get chat history for a chat."""
 
 import logging
-import uuid
 
-from fastapi import Cookie, HTTPException
+from fastapi import HTTPException, Query
 from pydantic import BaseModel, Field
 
 from db import get_firestore_service
@@ -12,7 +11,7 @@ from responses import ResponseCode, error_dict
 logger = logging.getLogger(__name__)
 
 
-# --- Response Schemas (API-specific) ---
+# --- Response Schemas ---
 
 
 class SourcePassage(BaseModel):
@@ -41,7 +40,7 @@ class ChatHistoryResponse(BaseModel):
     """Response for chat history endpoint."""
 
     messages: list[ChatHistoryMessage]
-    total_count: int = Field(..., description="Total message count in session")
+    total_count: int = Field(..., description="Total message count")
     has_more: bool = Field(default=False, description="Whether there are more messages")
 
 
@@ -49,18 +48,15 @@ class ChatHistoryResponse(BaseModel):
 
 
 async def get_chat_history(
-    limit: int = 50,
-    session_id: str | None = Cookie(default=None),
+    chat_id: str = Query(..., description="Chat ID"),
+    limit: int = Query(default=50, description="Max messages to return"),
 ) -> ChatHistoryResponse:
-    """Get chat history for the current session."""
-    if not session_id:
-        session_id = str(uuid.uuid4())
-
+    """Get chat history for a specific chat."""
     firestore_service = get_firestore_service()
 
     try:
-        messages = await firestore_service.get_messages(session_id, limit=limit)
-        total_count = await firestore_service.get_message_count(session_id)
+        messages = await firestore_service.get_messages(chat_id, limit=limit)
+        total_count = await firestore_service.get_message_count(chat_id)
 
         history_messages = [
             ChatHistoryMessage(

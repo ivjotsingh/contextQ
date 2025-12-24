@@ -24,13 +24,13 @@ from pydantic import BaseModel, Field
 from apps.chat.chat_history import ChatHistoryManager
 from config import get_settings
 from dependencies import get_chat_history_manager, get_rag_service
+from llm import LLMService
 from llm.prompts import (
     ASSISTANT_SYSTEM_PROMPT,
     QUERY_ANALYSIS_PROMPT,
     QUERY_ANALYSIS_SCHEMA,
     QUERY_ANALYSIS_SYSTEM_PROMPT,
 )
-from llm.service import LLMService
 from services import RAGService
 
 logger = logging.getLogger(__name__)
@@ -47,6 +47,11 @@ class ChatRequest(BaseModel):
         min_length=1,
         max_length=2000,
         description="User's message or question",
+        alias="question",
+    )
+    chat_id: str = Field(
+        ...,
+        description="Chat ID for conversation history",
     )
     doc_ids: list[str] | None = Field(
         None,
@@ -81,6 +86,7 @@ class _QueryAnalyzer:
         self,
         message: str,
         chat_history: str = "",
+        document_names: list[str] | None = None,
     ) -> _QueryAnalysis:
         """Analyze query to determine routing.
 
@@ -108,14 +114,20 @@ class _QueryAnalyzer:
                 else "No prior chat history."
             )
 
+            # Include document names for better sub-query generation
+            docs_section = ""
+            if document_names:
+                docs_list = "\n".join(f"- {name}" for name in document_names)
+                docs_section = f"\n\nAvailable documents:\n{docs_list}"
+
             prompt = QUERY_ANALYSIS_PROMPT.format(
                 question=message,
-                chat_history_section=chat_history_section,
+                chat_history_section=chat_history_section + docs_section,
                 max_sub_queries=self._max_sub_queries,
             )
 
             result = await asyncio.wait_for(
-                self._llm.generate_with_tool(
+                self._llm.generate_structured_output(
                     prompt=prompt,
                     system=QUERY_ANALYSIS_SYSTEM_PROMPT,
                     tool_name="analyze_query",
@@ -205,23 +217,31 @@ async def stream_response(
 ) -> StreamingResponse:
     """Stream a chat response.
 
+    Args:
+        request: Chat request with message and chat_id
+        session_id: Browser identifier (cookie) for document access
+
     Orchestrates:
     1. Prepare context and analyze query
     2. Route to appropriate response generator
     3. Stream response
     4. Save to chat history
-
-    Returns Server-Sent Events (SSE) stream.
     """
     if not session_id:
         session_id = str(uuid.uuid4())
 
+    chat_id = request.chat_id
     request_id = str(uuid.uuid4())[:8]
     logger.info("[%s] Chat: %s", request_id, request.message[:100])
 
     # --- Prepare context ---
-    chat_history = await chat_history_mgr.get_context(session_id)
-    await chat_history_mgr.save_user_message(session_id, request.message)
+    chat_history = await chat_history_mgr.get_context(chat_id)
+    await chat_history_mgr.save_user_message(chat_id, request.message)
+
+    # --- Fetch documents early (needed for analysis) ---
+    docs = await rag_service.get_session_documents(session_id)
+    doc_ids = [d.doc_id for d in docs]
+    doc_names = [d.filename for d in docs]
 
     # --- Fast path: Skip LLM analysis for simple greetings ---
     simple_greetings = {"hi", "hello", "hey", "help", "?", "thanks", "thank you"}
@@ -242,19 +262,26 @@ async def stream_response(
     else:
         # Full LLM analysis for complex queries
         analyzer = _QueryAnalyzer()
-        analysis = await analyzer.analyze(request.message, chat_history)
-        logger.debug(
-            "[%s] Analysis: skip_rag=%s, decompose=%s",
+        analysis = await analyzer.analyze(request.message, chat_history, doc_names)
+        logger.info(
+            "[%s] Query Analysis: skip_rag=%s, decompose=%s, reasoning=%s",
             request_id,
             analysis.skip_rag,
             analysis.needs_decomposition,
+            analysis.reasoning,
         )
-
-    # --- Fetch docs only if RAG is needed ---
-    doc_ids: list[str] = []
-    if not analysis.skip_rag:
-        docs = await rag_service.get_session_documents(session_id)
-        doc_ids = [d.doc_id for d in docs]
+        if analysis.needs_decomposition and analysis.sub_queries:
+            logger.info(
+                "[%s] Original query: %s",
+                request_id,
+                request.message[:200],
+            )
+            logger.info(
+                "[%s] Decomposed into %d sub-queries: %s",
+                request_id,
+                len(analysis.sub_queries),
+                analysis.sub_queries,
+            )
 
     # --- SSE Generator (streaming only) ---
     async def generate_sse_events():
@@ -298,10 +325,8 @@ async def stream_response(
                         yield f"data: {json.dumps(chunk)}\n\n"
 
             # Save assistant response
-            await chat_history_mgr.save_assistant_message(
-                session_id, full_answer, sources
-            )
-            await chat_history_mgr.maybe_generate_summary(session_id)
+            await chat_history_mgr.save_assistant_message(chat_id, full_answer, sources)
+            await chat_history_mgr.maybe_generate_summary(chat_id)
 
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
 

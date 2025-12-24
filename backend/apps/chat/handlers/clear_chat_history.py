@@ -1,9 +1,9 @@
-"""DELETE /chat/history - Clear chat history for session."""
+"""DELETE /chat/history - Clear chat history for a chat."""
 
 import logging
 import uuid
 
-from fastapi import Cookie
+from fastapi import Query
 from fastapi.responses import JSONResponse
 
 from db import get_firestore_service
@@ -13,21 +13,16 @@ logger = logging.getLogger(__name__)
 
 
 async def clear_chat_history(
-    session_id: str | None = Cookie(default=None),
+    chat_id: str = Query(..., description="Chat ID to clear"),
 ) -> JSONResponse:
-    """Clear chat history for the current session."""
-    if not session_id:
-        session_id = str(uuid.uuid4())
-
+    """Clear chat history for a specific chat."""
     request_id = str(uuid.uuid4())[:8]
-    logger.info(
-        "[%s] Clear chat history request for session: %s", request_id, session_id
-    )
+    logger.info("[%s] Clear chat history for chat: %s", request_id, chat_id)
 
     firestore_service = get_firestore_service()
 
     try:
-        deleted_count = await firestore_service.clear_history(session_id)
+        deleted_count = await firestore_service.clear_history(chat_id)
         return success_response(
             ResponseCode.SUCCESS, {"messages_deleted": deleted_count}, request_id
         )

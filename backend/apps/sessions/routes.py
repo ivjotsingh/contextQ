@@ -1,25 +1,18 @@
-"""Session routes - registers all session endpoints."""
+"""Chat routes - now handles chats within a session."""
 
 from fastapi import APIRouter
 
-from apps.sessions.handlers import (
-    create_session,
-    delete_session,
-    list_sessions,
-    switch_session,
-)
-from apps.sessions.handlers.list_sessions import SessionListResponse
+from apps.sessions.handlers.create_session import create_chat
+from apps.sessions.handlers.delete_session import delete_chat
+from apps.sessions.handlers.list_sessions import ChatListResponse, list_chats
 
-router = APIRouter(prefix="/sessions", tags=["Sessions"])
+router = APIRouter(prefix="/chats", tags=["Chats"])
 
-# GET /sessions - List sessions
-router.get("", response_model=SessionListResponse)(list_sessions)
+# GET /chats - List chats for session
+router.get("", response_model=ChatListResponse)(list_chats)
 
-# POST /sessions - Create session
-router.post("")(create_session)
+# POST /chats - Create new chat
+router.post("")(create_chat)
 
-# PUT /sessions/{target_session_id}/switch - Switch session
-router.put("/{target_session_id}/switch")(switch_session)
-
-# DELETE /sessions/{target_session_id} - Delete session
-router.delete("/{target_session_id}")(delete_session)
+# DELETE /chats/{chat_id} - Delete chat
+router.delete("/{chat_id}")(delete_chat)

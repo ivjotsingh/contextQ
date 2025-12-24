@@ -86,7 +86,8 @@ export function useDocuments() {
                     }
                 };
                 xhr.onerror = () => reject(new Error('Network error'));
-                xhr.open('POST', '/api/upload');
+                xhr.open('POST', '/api/documents/upload');
+                xhr.withCredentials = true; // Required to send/receive session cookies
                 xhr.send(formData);
             });
 
@@ -165,8 +166,11 @@ export function useDocuments() {
         }
     }, []);
 
-    // Fetch documents on mount
+    // Fetch documents on mount (with ref to prevent double-fetch in StrictMode)
+    const fetchedRef = useRef(false);
     useEffect(() => {
+        if (fetchedRef.current) return;
+        fetchedRef.current = true;
         fetchDocuments();
     }, [fetchDocuments]);
 

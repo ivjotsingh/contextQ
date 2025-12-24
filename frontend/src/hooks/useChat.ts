@@ -1,30 +1,31 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { throttle } from '../utils';
-import { UI_CONSTANTS } from '../constants';
+import { UI_CONSTANTS, API_BASE } from '../constants';
 import { Message } from '../types';
 import { api } from '../api';
 
 /**
  * Custom hook for managing chat state and API interactions
  * 
- * FIX: Added throttling to reduce re-renders during streaming
- * FIX: Using API client instead of raw fetch
+ * @param chatId - The current chat ID for history
  */
-export function useChat() {
+export function useChat(chatId: string | null) {
     const [messages, setMessages] = useState<Message[]>([]);
     const [isLoading, setIsLoading] = useState(false);
     const [isLoadingHistory, setIsLoadingHistory] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const abortControllerRef = useRef<AbortController | null>(null);
-    const historyLoadedRef = useRef(false);
+    const lastChatIdRef = useRef<string | null>(null);
 
     /**
      * Load chat history from server
      */
-    const loadHistory = useCallback(async () => {
+    const loadHistory = useCallback(async (targetChatId: string) => {
         setIsLoadingHistory(true);
+        setMessages([]);
+
         try {
-            const data: any = await api.getChatHistory(UI_CONSTANTS.CHAT_HISTORY_LIMIT);
+            const data: any = await api.getChatHistory(targetChatId, UI_CONSTANTS.CHAT_HISTORY_LIMIT);
 
             if (data.messages && data.messages.length > 0) {
                 const formattedMessages: Message[] = data.messages.map((msg: any, index: number) => ({
@@ -36,40 +37,35 @@ export function useChat() {
                     isStreaming: false,
                 }));
                 setMessages(formattedMessages);
-            } else {
-                setMessages([]);
             }
         } catch (err: any) {
             // Non-critical error, just continue without history
-            setMessages([]);
         } finally {
             setIsLoadingHistory(false);
         }
     }, []);
 
     /**
-     * Load chat history on mount
+     * Load history when chat changes
      */
     useEffect(() => {
-        if (historyLoadedRef.current) return;
-        historyLoadedRef.current = true;
-        loadHistory();
-    }, [loadHistory]);
+        if (!chatId) {
+            setMessages([]);
+            setIsLoadingHistory(false);
+            return;
+        }
 
-    /**
-     * Reload history (e.g., after switching sessions)
-     */
-    const reloadHistory = useCallback(async () => {
-        await loadHistory();
-    }, [loadHistory]);
+        if (chatId !== lastChatIdRef.current) {
+            lastChatIdRef.current = chatId;
+            loadHistory(chatId);
+        }
+    }, [chatId, loadHistory]);
 
     /**
      * Send a message and get a streaming response
-     * 
-     * FIX: Throttled state updates to reduce re-renders
      */
     const sendMessage = useCallback(async (question: string, docIds: string[] | null = null) => {
-        if (!question.trim()) return;
+        if (!question.trim() || !chatId) return;
 
         // Add user message
         const userMessage: Message = {
@@ -96,11 +92,10 @@ export function useChat() {
 
         setMessages(prev => [...prev, assistantMessage]);
 
-        // FIX: Use ref to accumulate content, throttle state updates
+        // Use ref to accumulate content, throttle state updates
         const contentRef = { current: '' };
         const sourcesRef = { current: [] as any[] };
 
-        // Throttled update function - only updates state every 100ms
         const throttledUpdate = throttle(() => {
             setMessages(prev =>
                 prev.map(msg =>
@@ -112,22 +107,23 @@ export function useChat() {
         }, UI_CONSTANTS.DEBOUNCE_MS);
 
         try {
-            // Cancel any existing request
             if (abortControllerRef.current) {
                 abortControllerRef.current.abort();
             }
             abortControllerRef.current = new AbortController();
 
-            const response = await fetch('/api/chat/stream', {
+            const response = await fetch(`${API_BASE}/chat`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                 },
                 body: JSON.stringify({
                     question,
+                    chat_id: chatId,
                     doc_ids: docIds,
                 }),
                 signal: abortControllerRef.current.signal,
+                credentials: 'include', // Required to send session cookies for document access
             });
 
             if (!response.ok) {
@@ -152,18 +148,16 @@ export function useChat() {
                             const data = JSON.parse(line.slice(6));
 
                             if (data.type === 'content') {
-                                // Accumulate in ref, throttle state update
                                 contentRef.current += data.content;
                                 throttledUpdate();
                             } else if (data.type === 'sources') {
                                 sourcesRef.current = data.sources;
                                 throttledUpdate();
                             } else if (data.type === 'done') {
-                                // Final update
                                 setMessages(prev =>
                                     prev.map(msg =>
                                         msg.id === assistantMessageId
-                                            ? { ...msg, content: contentRef.current, sources: sourcesRef.current, isStreaming: false, cached: data.cached }
+                                            ? { ...msg, content: contentRef.current, sources: sourcesRef.current, isStreaming: false }
                                             : msg
                                     )
                                 );
@@ -199,23 +193,23 @@ export function useChat() {
         } finally {
             setIsLoading(false);
         }
-    }, []);
+    }, [chatId]);
 
     /**
-     * Clear all messages (local and optionally server)
+     * Clear messages for current chat
      */
     const clearMessages = useCallback(async (deleteFromServer: boolean = true) => {
         setMessages([]);
         setError(null);
 
-        if (deleteFromServer) {
+        if (deleteFromServer && chatId) {
             try {
-                await api.clearChatHistory();
+                await api.clearChatHistory(chatId);
             } catch (err) {
                 // Non-critical
             }
         }
-    }, []);
+    }, [chatId]);
 
     /**
      * Cancel ongoing request
@@ -235,7 +229,6 @@ export function useChat() {
         sendMessage,
         clearMessages,
         cancelRequest,
-        reloadHistory,
     };
 }
 

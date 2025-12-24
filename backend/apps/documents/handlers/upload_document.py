@@ -127,8 +127,11 @@ async def upload_document(
             parse_result["text"], parse_result.get("page_count")
         )
 
-        # 5. Generate embeddings
-        embeddings = await embedding_service.embed_texts([c.text for c in chunks])
+        # 5. Generate embeddings (include filename for searchability)
+        filename = parse_result["metadata"]["filename"]
+        embeddings = await embedding_service.embed_texts(
+            [f"Document: {filename}\n\n{c.text}" for c in chunks]
+        )
 
         # 6. Store in vector database
         doc_id = str(uuid.uuid4())

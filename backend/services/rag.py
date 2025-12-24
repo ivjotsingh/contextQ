@@ -16,8 +16,8 @@ from collections.abc import AsyncGenerator
 from typing import Any
 
 from config import get_settings
+from llm import LLMError, LLMService
 from llm.prompts import DOCUMENT_QA_SYSTEM_PROMPT
-from llm.service import LLMError, LLMService
 from services.embeddings import EmbeddingService
 from services.vector_store import RetrievedChunk, VectorStoreService
 

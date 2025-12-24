@@ -41,7 +41,7 @@ class Settings(BaseSettings):
     """
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=("../.env", ".env"),
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
@@ -106,7 +106,7 @@ class Settings(BaseSettings):
 
     # RAG Retrieval Settings
     min_relevance_score: float = Field(
-        default=0.25, description="Minimum cosine similarity score for chunk relevance"
+        default=0.34, description="Minimum cosine similarity score for chunk relevance"
     )
     vector_store_batch_size: int = Field(
         default=100, description="Batch size for vector store upsert operations"

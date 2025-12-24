@@ -1,8 +1,9 @@
-"""POST /sessions - Create a new chat session."""
+"""POST /chats - Create a new chat."""
 
 import logging
 import uuid
 
+from fastapi import Cookie
 from fastapi.responses import JSONResponse
 
 from apps.sessions.helpers import set_session_cookie
@@ -12,23 +13,29 @@ from responses import ResponseCode, error_response, success_dict
 logger = logging.getLogger(__name__)
 
 
-async def create_session() -> JSONResponse:
-    """Create a new chat session."""
+async def create_chat(
+    session_id: str | None = Cookie(default=None),
+) -> JSONResponse:
+    """Create a new chat for the current session (browser)."""
+    if not session_id:
+        session_id = str(uuid.uuid4())
+
     request_id = str(uuid.uuid4())[:8]
-    new_session_id = str(uuid.uuid4())
+    chat_id = str(uuid.uuid4())
 
     firestore_service = get_firestore_service()
 
     try:
-        session = await firestore_service.create_session(new_session_id)
+        chat = await firestore_service.create_chat(chat_id, session_id)
         resp = JSONResponse(
-            content=success_dict(ResponseCode.SUCCESS, session, request_id),
+            content=success_dict(ResponseCode.SUCCESS, chat, request_id),
             status_code=201,
         )
-        return set_session_cookie(resp, new_session_id)
+        # Ensure session cookie is set
+        return set_session_cookie(resp, session_id)
 
     except Exception as e:
-        logger.exception("[%s] Failed to create session", request_id)
+        logger.exception("[%s] Failed to create chat", request_id)
         return error_response(
-            ResponseCode.INTERNAL_ERROR, f"Failed to create session: {e}", request_id
+            ResponseCode.INTERNAL_ERROR, f"Failed to create chat: {e}", request_id
         )

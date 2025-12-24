@@ -64,7 +64,7 @@ export function DocumentList({ documents, onDelete, isLoading }: DocumentListPro
                     <FileText className="w-8 h-8 text-gray-600" />
                 </div>
                 <p className="text-gray-500 mb-1">No documents yet</p>
-                <p className="text-sm text-gray-600">Upload documents to start chatting</p>
+                <p className="text-sm text-gray-600">Upload documents for source-backed answers</p>
             </div>
         );
     }

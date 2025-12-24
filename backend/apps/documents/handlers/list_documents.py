@@ -62,7 +62,7 @@ async def list_documents(
                     else datetime.now(UTC)
                 ),
                 content_hash=d.content_hash or "",
-                page_count=d.page_count,
+                page_count=None,  # Not stored in vector store metadata
             )
             for d in docs
         ]

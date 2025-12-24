@@ -36,7 +36,7 @@ export function ChatInterface({
 
     const handleSubmit = (e: FormEvent) => {
         e.preventDefault();
-        if (!input.trim() || isLoading || !hasDocuments) return;
+        if (!input.trim() || isLoading) return;
 
         onSendMessage(input);
         setInput('');
@@ -51,7 +51,7 @@ export function ChatInterface({
 
     // FIX: Wire up suggestion buttons
     const handleSuggestionClick = (suggestion: string) => {
-        if (!isLoading && hasDocuments) {
+        if (!isLoading) {
             onSendMessage(suggestion);
         }
     };
@@ -95,12 +95,7 @@ export function ChatInterface({
                         value={input}
                         onChange={(e) => setInput(e.target.value)}
                         onKeyDown={handleKeyDown}
-                        placeholder={
-                            hasDocuments
-                                ? "Ask anything about your documents..."
-                                : "Upload documents to start chatting..."
-                        }
-                        disabled={!hasDocuments}
+                        placeholder="Ask anything..."
                         rows={1}
                         className="input-field-chat pr-14 min-h-[56px] max-h-[200px]"
                         style={{ resize: 'none' }}
@@ -120,7 +115,7 @@ export function ChatInterface({
                     ) : (
                         <button
                             type="submit"
-                            disabled={!input.trim() || !hasDocuments}
+                            disabled={!input.trim()}
                             className="absolute right-3 top-1/2 -translate-y-1/2 p-2 
                        bg-sky-500 hover:bg-sky-400 text-white 
                        rounded-xl transition-all duration-200
@@ -147,10 +142,10 @@ interface EmptyStateProps {
 
 function EmptyState({ hasDocuments, onSuggestionClick }: EmptyStateProps) {
     const suggestions = [
-        "What are the main topics covered?",
+        "What can you do?",
         "Summarize the key points",
-        "What conclusions are drawn?",
-        "Explain the methodology used",
+        "What are the main topics?",
+        "Compare the documents",
     ];
 
     return (
@@ -161,36 +156,34 @@ function EmptyState({ hasDocuments, onSuggestionClick }: EmptyStateProps) {
             </div>
 
             <h2 className="text-2xl font-semibold text-gray-100 mb-2">
-                {hasDocuments ? 'Ready to chat' : 'Welcome to ContextQ'}
+                Welcome to ContextQ
             </h2>
 
             <p className="text-gray-500 max-w-md mb-8">
                 {hasDocuments
                     ? 'Ask questions about your documents and get answers with source citations.'
-                    : 'Upload your documents to start asking questions. Your data stays private.'}
+                    : 'Upload documents to get answers with source citations, or just start chatting!'}
             </p>
 
-            {hasDocuments && (
-                <div className="w-full max-w-md space-y-2">
-                    <p className="text-xs text-gray-600 uppercase tracking-wider mb-3">
-                        Try asking
-                    </p>
-                    <div className="grid grid-cols-2 gap-2">
-                        {suggestions.map((suggestion, i) => (
-                            <button
-                                key={i}
-                                onClick={() => onSuggestionClick(suggestion)}
-                                className="px-4 py-3 text-sm text-left text-gray-400 
+            <div className="w-full max-w-md space-y-2">
+                <p className="text-xs text-gray-600 uppercase tracking-wider mb-3">
+                    Try asking
+                </p>
+                <div className="grid grid-cols-2 gap-2">
+                    {suggestions.map((suggestion, i) => (
+                        <button
+                            key={i}
+                            onClick={() => onSuggestionClick(suggestion)}
+                            className="px-4 py-3 text-sm text-left text-gray-400 
                          bg-white/[0.02] hover:bg-white/[0.05] 
                          border border-white/[0.05] hover:border-white/[0.1]
                          rounded-xl transition-all duration-200"
-                            >
-                                {suggestion}
-                            </button>
-                        ))}
-                    </div>
+                        >
+                            {suggestion}
+                        </button>
+                    ))}
                 </div>
-            )}
+            </div>
         </div>
     );
 }

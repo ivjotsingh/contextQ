@@ -1,7 +1,8 @@
 """Firestore service for chat history persistence.
 
-Stores chat messages in Firestore with session-based subcollections.
-Implements summarization for conversations exceeding 10 messages.
+Stores chat messages in Firestore with chat-based subcollections.
+- `chats/{chat_id}/messages/...` - Chat history per conversation
+- session_id is used only for document filtering in Qdrant, not here
 """
 
 import json
@@ -21,38 +22,25 @@ logger = logging.getLogger(__name__)
 
 
 def _load_firebase_credentials(creds_value: str) -> dict:
-    """Load Firebase credentials from JSON string, file path, or base64.
-
-    Args:
-        creds_value: Either a JSON string, file path, or base64-encoded JSON
-
-    Returns:
-        Parsed credentials dictionary
-    """
+    """Load Firebase credentials from JSON string, file path, or base64."""
     import base64
 
-    # Check if it's a file path
     if os.path.isfile(creds_value):
-        logger.info("Loading Firebase credentials from file: %s", creds_value)
         with open(creds_value) as f:
             return json.load(f)
 
-    # Try to parse as JSON string
     try:
         return json.loads(creds_value)
     except json.JSONDecodeError:
         pass
 
-    # Try to decode as base64
     try:
         decoded = base64.b64decode(creds_value).decode("utf-8")
         return json.loads(decoded)
     except Exception:
         pass
 
-    raise ValueError(
-        "FIREBASE_CREDENTIALS is not valid JSON, file path, or base64-encoded JSON"
-    )
+    raise ValueError("FIREBASE_CREDENTIALS is not valid JSON, file path, or base64")
 
 
 class FirestoreService:
@@ -70,20 +58,16 @@ class FirestoreService:
         settings = get_settings()
 
         try:
-            # Load credentials
             creds_dict = _load_firebase_credentials(settings.firebase_credentials)
 
-            # Initialize firebase_admin if not already done
             if not firebase_admin._apps:
                 cred = credentials.Certificate(creds_dict)
                 firebase_admin.initialize_app(cred)
 
-            # Create google-auth credentials for AsyncClient
             gcp_credentials = service_account.Credentials.from_service_account_info(
                 creds_dict
             )
 
-            # Create AsyncClient with explicit credentials and project
             FirestoreService._db = AsyncClient(
                 project=creds_dict.get("project_id"),
                 credentials=gcp_credentials,
@@ -96,9 +80,11 @@ class FirestoreService:
             logger.error("Failed to initialize Firestore: %s", e)
             raise
 
+    # --- Chat Message Methods (use chat_id) ---
+
     async def add_message(
         self,
-        session_id: str,
+        chat_id: str,
         role: str,
         content: str,
         sources: list[dict[str, Any]] | None = None,
@@ -113,28 +99,26 @@ class FirestoreService:
             }
 
             doc_ref = (
-                self.db.collection("sessions")
-                .document(session_id)
+                self.db.collection("chats")
+                .document(chat_id)
                 .collection("messages")
                 .document()
             )
 
             await doc_ref.set(message_data)
-            logger.debug("Added message to session %s", session_id)
+            logger.debug("Added message to chat %s", chat_id)
             return doc_ref.id
 
         except Exception as e:
             logger.error("Failed to add message: %s", e)
             raise
 
-    async def get_messages(
-        self, session_id: str, limit: int = 10
-    ) -> list[dict[str, Any]]:
+    async def get_messages(self, chat_id: str, limit: int = 10) -> list[dict[str, Any]]:
         """Get recent messages from chat history."""
         try:
             messages_ref = (
-                self.db.collection("sessions")
-                .document(session_id)
+                self.db.collection("chats")
+                .document(chat_id)
                 .collection("messages")
                 .order_by("timestamp", direction=firestore.Query.DESCENDING)
                 .limit(limit)
@@ -155,15 +139,13 @@ class FirestoreService:
 
         except Exception as e:
             logger.error("Failed to get messages: %s", e)
-            raise  # Don't swallow errors
+            raise
 
-    async def get_message_count(self, session_id: str) -> int:
-        """Get total message count for a session."""
+    async def get_message_count(self, chat_id: str) -> int:
+        """Get total message count for a chat."""
         try:
             messages_ref = (
-                self.db.collection("sessions")
-                .document(session_id)
-                .collection("messages")
+                self.db.collection("chats").document(chat_id).collection("messages")
             )
             count_query = messages_ref.count()
             result = await count_query.get()
@@ -171,13 +153,13 @@ class FirestoreService:
 
         except Exception as e:
             logger.error("Failed to get message count: %s", e)
-            raise  # Don't swallow errors
+            raise
 
-    async def get_or_create_summary(self, session_id: str) -> str | None:
-        """Get existing summary for a session."""
+    async def get_or_create_summary(self, chat_id: str) -> str | None:
+        """Get existing summary for a chat."""
         try:
-            session_ref = self.db.collection("sessions").document(session_id)
-            doc = await session_ref.get()
+            chat_ref = self.db.collection("chats").document(chat_id)
+            doc = await chat_ref.get()
 
             if doc.exists:
                 data = doc.to_dict()
@@ -187,29 +169,27 @@ class FirestoreService:
 
         except Exception as e:
             logger.error("Failed to get summary: %s", e)
-            raise  # Don't swallow errors
+            raise
 
-    async def save_summary(self, session_id: str, summary: str) -> None:
+    async def save_summary(self, chat_id: str, summary: str) -> None:
         """Save a conversation summary."""
         try:
-            session_ref = self.db.collection("sessions").document(session_id)
-            await session_ref.set(
+            chat_ref = self.db.collection("chats").document(chat_id)
+            await chat_ref.set(
                 {"summary": summary, "summary_updated_at": datetime.now(UTC)},
                 merge=True,
             )
-            logger.info("Saved summary for session %s", session_id)
+            logger.info("Saved summary for chat %s", chat_id)
 
         except Exception as e:
             logger.error("Failed to save summary: %s", e)
             raise
 
-    async def clear_history(self, session_id: str) -> int:
-        """Clear all messages for a session."""
+    async def clear_history(self, chat_id: str) -> int:
+        """Clear all messages for a chat."""
         try:
             messages_ref = (
-                self.db.collection("sessions")
-                .document(session_id)
-                .collection("messages")
+                self.db.collection("chats").document(chat_id).collection("messages")
             )
             docs = await messages_ref.get()
             deleted_count = 0
@@ -226,32 +206,32 @@ class FirestoreService:
             if deleted_count % 500 != 0:
                 await batch.commit()
 
-            session_ref = self.db.collection("sessions").document(session_id)
-            await session_ref.set(
+            chat_ref = self.db.collection("chats").document(chat_id)
+            await chat_ref.set(
                 {"summary": None, "summary_updated_at": None}, merge=True
             )
 
-            logger.info("Cleared %d messages for session %s", deleted_count, session_id)
+            logger.info("Cleared %d messages for chat %s", deleted_count, chat_id)
             return deleted_count
 
         except Exception as e:
             logger.error("Failed to clear history: %s", e)
             raise
 
-    async def build_chat_context(self, session_id: str, max_messages: int = 10) -> str:
+    async def build_chat_context(self, chat_id: str, max_messages: int = 10) -> str:
         """Build chat context for LLM from history."""
         try:
-            message_count = await self.get_message_count(session_id)
+            message_count = await self.get_message_count(chat_id)
 
             if message_count == 0:
                 return ""
 
-            messages = await self.get_messages(session_id, limit=max_messages)
+            messages = await self.get_messages(chat_id, limit=max_messages)
 
             if message_count <= max_messages:
                 return self._format_messages_for_context(messages)
 
-            summary = await self.get_or_create_summary(session_id)
+            summary = await self.get_or_create_summary(chat_id)
 
             context_parts = []
             if summary:
@@ -266,7 +246,7 @@ class FirestoreService:
 
         except Exception as e:
             logger.error("Failed to build chat context: %s", e)
-            raise  # Don't swallow errors
+            raise
 
     def _format_messages_for_context(self, messages: list[dict[str, Any]]) -> str:
         """Format messages into a context string."""
@@ -280,70 +260,74 @@ class FirestoreService:
 
         return "\n".join(formatted)
 
-    async def get_sessions(self, limit: int = 20) -> list[dict[str, Any]]:
-        """Get all sessions with their metadata."""
+    # --- Chat Management Methods ---
+
+    async def get_chats(self, session_id: str, limit: int = 20) -> list[dict[str, Any]]:
+        """Get all chats for a session (browser)."""
         try:
-            sessions_ref = (
-                self.db.collection("sessions")
+            chats_ref = (
+                self.db.collection("chats")
+                .where("session_id", "==", session_id)
                 .order_by("last_activity", direction=firestore.Query.DESCENDING)
                 .limit(limit)
             )
 
-            docs = await sessions_ref.get()
-            sessions = []
+            docs = await chats_ref.get()
+            chats = []
 
             for doc in docs:
                 data = doc.to_dict()
-                session = {
+                chat = {
                     "id": doc.id,
                     "title": data.get("title", "New Chat"),
                     "last_activity": data.get("last_activity"),
                     "message_count": data.get("message_count", 0),
                 }
-                if session["last_activity"]:
-                    session["last_activity"] = session["last_activity"].isoformat()
-                sessions.append(session)
+                if chat["last_activity"]:
+                    chat["last_activity"] = chat["last_activity"].isoformat()
+                chats.append(chat)
 
-            return sessions
+            return chats
 
         except Exception as e:
-            logger.error("Failed to get sessions: %s", e)
-            raise  # Don't swallow errors
+            logger.error("Failed to get chats: %s", e)
+            raise
 
-    async def create_session(
-        self, session_id: str, title: str = "New Chat"
+    async def create_chat(
+        self, chat_id: str, session_id: str, title: str = "New Chat"
     ) -> dict[str, Any]:
-        """Create a new session."""
+        """Create a new chat for a session."""
         try:
-            session_ref = self.db.collection("sessions").document(session_id)
-            session_data = {
+            chat_ref = self.db.collection("chats").document(chat_id)
+            chat_data = {
+                "session_id": session_id,
                 "title": title,
                 "created_at": datetime.now(UTC),
                 "last_activity": datetime.now(UTC),
                 "message_count": 0,
             }
-            await session_ref.set(session_data, merge=True)
+            await chat_ref.set(chat_data, merge=True)
 
             return {
-                "id": session_id,
+                "id": chat_id,
                 "title": title,
-                "last_activity": session_data["last_activity"].isoformat(),
+                "last_activity": chat_data["last_activity"].isoformat(),
                 "message_count": 0,
             }
 
         except Exception as e:
-            logger.error("Failed to create session: %s", e)
+            logger.error("Failed to create chat: %s", e)
             raise
 
-    async def update_session_activity(
-        self, session_id: str, first_message: str | None = None
+    async def update_chat_activity(
+        self, chat_id: str, first_message: str | None = None
     ) -> None:
-        """Update session's last activity and optionally set title from first message."""
+        """Update chat's last activity and optionally set title."""
         try:
-            session_ref = self.db.collection("sessions").document(session_id)
+            chat_ref = self.db.collection("chats").document(chat_id)
             update_data: dict[str, Any] = {"last_activity": datetime.now(UTC)}
 
-            doc = await session_ref.get()
+            doc = await chat_ref.get()
             if doc.exists:
                 data = doc.to_dict()
                 update_data["message_count"] = (data.get("message_count", 0) or 0) + 1
@@ -361,24 +345,24 @@ class FirestoreService:
                         title += "..."
                     update_data["title"] = title
 
-            await session_ref.set(update_data, merge=True)
+            await chat_ref.set(update_data, merge=True)
 
         except Exception as e:
-            logger.error("Failed to update session activity: %s", e)
-            raise  # Don't swallow errors
+            logger.error("Failed to update chat activity: %s", e)
+            raise
 
-    async def delete_session(self, session_id: str) -> bool:
-        """Delete a session and all its messages."""
+    async def delete_chat(self, chat_id: str) -> bool:
+        """Delete a chat and all its messages."""
         try:
-            await self.clear_history(session_id)
-            session_ref = self.db.collection("sessions").document(session_id)
-            await session_ref.delete()
+            await self.clear_history(chat_id)
+            chat_ref = self.db.collection("chats").document(chat_id)
+            await chat_ref.delete()
 
-            logger.info("Deleted session %s", session_id)
+            logger.info("Deleted chat %s", chat_id)
             return True
 
         except Exception as e:
-            logger.error("Failed to delete session: %s", e)
+            logger.error("Failed to delete chat: %s", e)
             return False
 
     async def health_check(self) -> dict[str, Any]:
@@ -398,8 +382,5 @@ class FirestoreService:
 
 
 def get_firestore_service() -> FirestoreService:
-    """Get Firestore service singleton.
-
-    FirestoreService already implements singleton pattern internally.
-    """
+    """Get Firestore service singleton."""
     return FirestoreService()

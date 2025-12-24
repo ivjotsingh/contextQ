@@ -13,20 +13,25 @@ User question: {question}
 {chat_history_section}
 
 Determine:
-1. If this is a GENERAL question that doesn't need document lookup (skip_rag=true)
-   - Greetings: "hello", "hi", "hey", "thanks"
-   - Meta questions: "what can you do", "who are you", "help me"
-   - General knowledge that wouldn't be in uploaded documents
-
-2. If it requires information from MULTIPLE documents (needs_decomposition=true)
-   Based on the question and chat history, detect:
-   - Comparison: "compare", "difference", "vs", "between", "which one"
-   - Synthesis: "combine", "together", "both", "all documents"
-   - Overview: "summarize all", "overview of documents"
-   - Cross-reference: mentions multiple document names or topics
+1. skip_rag (true/false)
+   Set skip_rag=true ONLY for:
+   - Simple greetings: "hi", "hello", "thanks"
+   - Questions about the assistant itself: "what can you do", "who are you"
    
-   If decomposition needed, generate up to {max_sub_queries} sub-queries.
-   Each sub-query should target a specific document or topic mentioned."""
+   Set skip_rag=false for EVERYTHING ELSE, including:
+   - Any question about documents or their content
+   - Any question that might be answered using uploaded documents
+   - Questions about "how many", "what", "summarize", etc.
+   
+   When in doubt, set skip_rag=false.
+
+2. needs_decomposition (true/false)
+   Set true if the question spans MULTIPLE documents:
+   - Comparisons: "compare", "difference", "vs"
+   - Synthesis: "combine", "all documents", "both"
+   - Cross-reference: mentions multiple document names
+   
+   If true, generate up to {max_sub_queries} sub-queries targeting specific documents."""
 
 
 # JSON schema for structured output via tool_use

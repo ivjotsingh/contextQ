@@ -72,7 +72,7 @@ def get_chat_history_manager(
     """
     from apps.chat.chat_history import ChatHistoryManager
     from config import get_settings
-    from llm.service import LLMService
+    from llm import LLMService
 
     return ChatHistoryManager(
         firestore_service=firestore_service,

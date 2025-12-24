@@ -1,5 +1,4 @@
 // Simple API client - just wraps fetch with error handling
-// Backend-friendly, no complex abstractions
 
 import { API_BASE } from './constants';
 
@@ -34,6 +33,7 @@ async function apiFetch<T>(
         const response = await fetch(`${API_BASE}${endpoint}`, {
             ...fetchOptions,
             signal: controller.signal,
+            credentials: 'include', // Required to send/receive session cookies
         });
 
         clearTimeout(timeoutId);
@@ -55,31 +55,34 @@ async function apiFetch<T>(
             throw error;
         }
 
-        if (error.name === 'AbortError') {
-            throw new ApiError('Request timeout');
+        if (error instanceof Error) {
+            if (error.name === 'AbortError') {
+                throw new ApiError('Request timeout');
+            }
+            throw new ApiError(error.message || 'Network error');
         }
 
-        throw new ApiError(error.message || 'Network error');
+        throw new ApiError('Unknown error occurred');
     }
 }
 
-// Simple API methods - one per endpoint
+// API methods
 export const api = {
-    // Chat
-    getChatHistory: (limit: number = 50) =>
-        apiFetch(`/chat/history?limit=${limit}`),
+    // Chat history (requires chat_id)
+    getChatHistory: (chatId: string, limit: number = 50) =>
+        apiFetch(`/chat/history?chat_id=${chatId}&limit=${limit}`),
 
-    clearChatHistory: () =>
-        apiFetch('/chat/history', { method: 'DELETE' }),
+    clearChatHistory: (chatId: string) =>
+        apiFetch(`/chat/history?chat_id=${chatId}`, { method: 'DELETE' }),
 
-    // Documents
+    // Documents (uses session_id from cookie)
     getDocuments: () =>
         apiFetch('/documents'),
 
     uploadDocument: (file: File) => {
         const formData = new FormData();
         formData.append('file', file);
-        return apiFetch('/upload', {
+        return apiFetch('/documents/upload', {
             method: 'POST',
             body: formData,
         });
@@ -88,18 +91,15 @@ export const api = {
     deleteDocument: (docId: string) =>
         apiFetch(`/documents/${docId}`, { method: 'DELETE' }),
 
-    // Sessions
-    getSessions: () =>
-        apiFetch('/sessions'),
+    // Chats (uses session_id from cookie to filter)
+    getChats: () =>
+        apiFetch('/chats'),
 
-    createSession: () =>
-        apiFetch('/sessions', { method: 'POST' }),
+    createChat: () =>
+        apiFetch('/chats', { method: 'POST' }),
 
-    switchSession: (sessionId: string) =>
-        apiFetch(`/sessions/${sessionId}/switch`, { method: 'PUT' }),
-
-    deleteSession: (sessionId: string) =>
-        apiFetch(`/sessions/${sessionId}`, { method: 'DELETE' }),
+    deleteChat: (chatId: string) =>
+        apiFetch(`/chats/${chatId}`, { method: 'DELETE' }),
 };
 
 export { ApiError };

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import rehypeSanitize from 'rehype-sanitize';
 import { User, Bot, ChevronDown, ChevronUp, FileText, Zap } from 'lucide-react';
-import SourceCard from './SourceCard';
+import SourceCard from './SourceCard.tsx';
 import { Message } from '../types';
 
 interface MessageBubbleProps {
@@ -18,8 +18,8 @@ export function MessageBubble({ message }: MessageBubbleProps) {
         <div className={`flex gap-3 ${isUser ? 'flex-row-reverse' : ''} animate-message-in`}>
             {/* Avatar */}
             <div className={`flex-shrink-0 w-8 h-8 rounded-xl flex items-center justify-center ${isUser
-                    ? 'bg-sky-500'
-                    : 'bg-gradient-to-br from-violet-500/20 to-sky-500/20 border border-white/10'
+                ? 'bg-sky-500'
+                : 'bg-gradient-to-br from-violet-500/20 to-sky-500/20 border border-white/10'
                 }`}>
                 {isUser ? (
                     <User className="w-4 h-4 text-white" />
@@ -74,7 +74,10 @@ export function MessageBubble({ message }: MessageBubbleProps) {
                      border border-white/[0.05] rounded-lg transition-all duration-200"
                     >
                         <FileText className="w-3.5 h-3.5" />
-                        <span>{message.sources.length} source{message.sources.length > 1 ? 's' : ''}</span>
+                        <span>
+                            {message.sources?.length || 0} source{(message.sources?.length || 0) > 1 ? 's' : ''} from{' '}
+                            {new Set(message.sources?.map(s => s.filename) || []).size} document{new Set(message.sources?.map(s => s.filename) || []).size > 1 ? 's' : ''}
+                        </span>
                         {showSources ? (
                             <ChevronUp className="w-3.5 h-3.5" />
                         ) : (
@@ -86,9 +89,9 @@ export function MessageBubble({ message }: MessageBubbleProps) {
                 {/* Sources list */}
                 {showSources && hasSources && (
                     <div className="w-full space-y-2 animate-in">
-                        {message.sources.map((source, index) => (
+                        {message.sources?.map((source, index) => (
                             <SourceCard key={`${source.doc_id}-${source.chunk_index}`} source={source} index={index + 1} />
-                        ))}
+                        )) ?? []}
                     </div>
                 )}
 
