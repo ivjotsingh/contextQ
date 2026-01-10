@@ -13,7 +13,6 @@ import json
 import logging
 import uuid
 from collections.abc import AsyncGenerator
-from dataclasses import dataclass
 from typing import Any
 
 from anthropic import APITimeoutError
@@ -30,6 +29,7 @@ from llm.prompts import (
     QUERY_ANALYSIS_PROMPT,
     QUERY_ANALYSIS_SCHEMA,
     QUERY_ANALYSIS_SYSTEM_PROMPT,
+    QueryAnalysisResult,
 )
 from services import RAGService
 
@@ -62,14 +62,7 @@ class ChatRequest(BaseModel):
 # --- Query Analyzer (private to this handler) ---
 
 
-@dataclass
-class _QueryAnalysis:
-    """Result of query analysis."""
-
-    skip_rag: bool
-    needs_decomposition: bool
-    sub_queries: list[str]
-    reasoning: str = ""
+# Use QueryAnalysisResult from llm.prompts (Pydantic model)
 
 
 class _QueryAnalyzer:
@@ -87,7 +80,7 @@ class _QueryAnalyzer:
         message: str,
         chat_history: str = "",
         document_names: list[str] | None = None,
-    ) -> _QueryAnalysis:
+    ) -> QueryAnalysisResult:
         """Analyze query to determine routing.
 
         Uses the query text and chat history to decide:
@@ -99,7 +92,7 @@ class _QueryAnalyzer:
         if len(words) <= 2:
             lower = message.lower().strip()
             if lower in ("hi", "hello", "hey", "help", "?", "thanks", "thank you"):
-                return _QueryAnalysis(
+                return QueryAnalysisResult(
                     skip_rag=True,
                     needs_decomposition=False,
                     sub_queries=[],
@@ -154,7 +147,7 @@ class _QueryAnalyzer:
             if needs_decomposition and not sub_queries:
                 needs_decomposition = False
 
-            return _QueryAnalysis(
+            return QueryAnalysisResult(
                 skip_rag=skip_rag,
                 needs_decomposition=needs_decomposition,
                 sub_queries=sub_queries,
@@ -163,7 +156,7 @@ class _QueryAnalyzer:
 
         except (TimeoutError, APITimeoutError) as e:
             logger.warning("Query analysis timed out: %s", e)
-            return _QueryAnalysis(
+            return QueryAnalysisResult(
                 skip_rag=False,
                 needs_decomposition=False,
                 sub_queries=[],
@@ -172,7 +165,7 @@ class _QueryAnalyzer:
 
         except Exception as e:
             logger.warning("Query analysis failed: %s", e)
-            return _QueryAnalysis(
+            return QueryAnalysisResult(
                 skip_rag=False,
                 needs_decomposition=False,
                 sub_queries=[],
@@ -252,7 +245,7 @@ async def stream_response(
 
     if is_simple_greeting:
         # No LLM call needed - go straight to response
-        analysis = _QueryAnalysis(
+        analysis = QueryAnalysisResult(
             skip_rag=True,
             needs_decomposition=False,
             sub_queries=[],

@@ -136,7 +136,7 @@ Run the entire stack for **free** during development:
        │
        ▼
 5. Vector Search (Qdrant)
-   → Top 5 chunks, relevance > 0.34
+   → Top 5 chunks, relevance > 0.20
        │
        ▼
 6. Filter by Relevance
