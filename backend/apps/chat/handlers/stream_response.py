@@ -159,6 +159,7 @@ async def _stream_general_response(
     message: str,
     chat_history: str,
     expanded_query: str | None = None,
+    doc_names: list[str] | None = None,
 ) -> AsyncGenerator[dict[str, Any], None]:
     """Stream a general (non-RAG) response."""
     llm = LLMService()
@@ -174,7 +175,15 @@ async def _stream_general_response(
     if expanded_query and expanded_query.strip().lower() != message.strip().lower():
         interpretation = f"\nINTERPRETED AS: {expanded_query}\n"
 
-    prompt = f"{history_section}User message: {message}{interpretation}"
+    # Add document info for system meta questions
+    doc_info = ""
+    if doc_names:
+        doc_list = "\n".join(f"- {name}" for name in doc_names)
+        doc_info = (
+            f"\n\nCURRENTLY UPLOADED DOCUMENTS ({len(doc_names)} total):\n{doc_list}\n"
+        )
+
+    prompt = f"{history_section}User message: {message}{interpretation}{doc_info}"
 
     answer_parts: list[str] = []
     async for chunk in llm.stream(prompt, ASSISTANT_SYSTEM_PROMPT, temperature=0.7):
@@ -300,9 +309,9 @@ async def stream_response(
             sources: list[dict[str, Any]] = []
 
             if analysis.skip_rag:
-                # General response (no RAG)
+                # General response (no RAG) - pass doc_names for system meta questions
                 async for chunk in _stream_general_response(
-                    request.message, chat_history, analysis.expanded_query
+                    request.message, chat_history, analysis.expanded_query, doc_names
                 ):
                     if chunk.get("type") == "done":
                         full_answer = chunk.get("full_answer", "")

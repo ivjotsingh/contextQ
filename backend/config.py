@@ -100,7 +100,7 @@ class Settings(BaseSettings):
 
     # RAG Retrieval Settings
     min_relevance_score: float = Field(
-        default=0.20, description="Minimum cosine similarity score for chunk relevance"
+        default=0.34, description="Minimum cosine similarity score for chunk relevance"
     )
     vector_store_batch_size: int = Field(
         default=100, description="Batch size for vector store upsert operations"

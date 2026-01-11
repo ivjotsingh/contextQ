@@ -142,7 +142,7 @@ Run the entire stack for **free** during development:
        │
        ▼
 5. Vector Search (Qdrant)
-   → Top 5 chunks, relevance > 0.20
+   → Top 5 chunks, relevance > 0.34
        │
        ▼
 6. Filter by Relevance
@@ -547,10 +547,12 @@ data: {"type":"done"}
 - **Hybrid search** — Combine BM25 (keyword) + vector (semantic) for best results
 - **Semantic chunking** — Chunk by meaning instead of fixed size
 - **Multi-modal support** — Extract and search images/charts from PDFs
+- **Citation markers** — LLM outputs [1], [2] references linked to source chunks
 
 **Production Infrastructure:**
 - **Caching layer** — Redis for embeddings, responses, and hot documents
 - **Cost tracking** — Real-time API cost monitoring with budget alerts
+- **Latency optimizations** — Parallel embedding, response streaming from first token
 
 **Security & Compliance:**
 - **Authentication** — User accounts with JWT, role-based access control

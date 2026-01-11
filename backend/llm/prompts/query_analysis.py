@@ -33,14 +33,20 @@ User question: {question}
 Determine:
 
 1. skip_rag (true/false)
-   Set skip_rag=true ONLY for:
+   Set skip_rag=true for:
    - Simple greetings: "hi", "hello", "thanks"
    - Questions about the assistant itself: "what can you do", "who are you"
+   - System meta questions: "how many documents uploaded", "list my documents", "what files do I have"
+     (These are about the SYSTEM, not about document CONTENT - they should be answered by the assistant)
    
-   Set skip_rag=false for EVERYTHING ELSE, including:
-   - Any question about documents or their content
-   - Any question that might be answered using uploaded documents
-   - Follow-up questions like "now?", "what about that?", "more details"
+   Set skip_rag=false for:
+   - Questions about document CONTENT: "what does the resume say", "summarize the report"
+   - Any question that needs to search INSIDE documents
+   - Follow-up questions about document content
+   
+   KEY DISTINCTION:
+   - "How many documents?" → skip_rag=true (system info)
+   - "What is in the documents?" → skip_rag=false (content search)
    
    When in doubt, set skip_rag=false.
 

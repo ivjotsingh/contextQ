@@ -76,6 +76,6 @@ def get_chat_history_manager(
 
     return ChatHistoryManager(
         firestore_service=firestore_service,
-        llm_client=LLMService(get_settings()),
+        llm_client=LLMService(),  # Uses default model from config
         settings=get_settings(),
     )

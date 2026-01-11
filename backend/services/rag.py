@@ -197,7 +197,8 @@ class RAGService:
         """Convert chunks to source dicts for API response."""
         return [
             {
-                "text": c.text[:500] + "..." if len(c.text) > 500 else c.text,
+                # "text": c.text[:500] + "..." if len(c.text) > 500 else c.text,
+                "text": c.text,
                 "filename": c.filename,
                 "page_number": c.page_number,
                 "chunk_index": c.chunk_index,
