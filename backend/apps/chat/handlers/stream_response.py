@@ -2,7 +2,7 @@
 
 Orchestrates the chat flow:
 1. Get chat history context
-2. Analyze query (skip RAG? decompose?)
+2. Analyze query (skip RAG? rewrite for search?)
 3. Retrieve relevant context (RAGService)
 4. Stream LLM response
 5. Save to chat history
@@ -64,12 +64,11 @@ class ChatRequest(BaseModel):
 
 
 class _QueryAnalyzer:
-    """Analyzes queries to determine routing (RAG vs general)."""
+    """Analyzes queries to determine routing and rewrite for search."""
 
     def __init__(self) -> None:
         settings = get_settings()
         self._llm = LLMService()
-        self._max_sub_queries = settings.max_sub_queries
         self._timeout = settings.query_analysis_timeout
         self._model = settings.query_analysis_model
 
@@ -79,7 +78,7 @@ class _QueryAnalyzer:
         chat_history: str = "",
         document_names: list[str] | None = None,
     ) -> QueryAnalysisResult:
-        """Analyze query to determine routing."""
+        """Analyze query to determine routing and generate search query."""
         # Fast path: very short = likely greeting
         words = message.split()
         if len(words) <= 2:
@@ -87,8 +86,7 @@ class _QueryAnalyzer:
             if lower in ("hi", "hello", "hey", "help", "?", "thanks", "thank you"):
                 return QueryAnalysisResult(
                     skip_rag=True,
-                    needs_decomposition=False,
-                    sub_queries=[],
+                    expanded_query=message,
                     reasoning="Greeting detected",
                 )
 
@@ -108,7 +106,6 @@ class _QueryAnalyzer:
             prompt = QUERY_ANALYSIS_PROMPT.format(
                 question=message,
                 chat_history_section=chat_history_section + docs_section,
-                max_sub_queries=self._max_sub_queries,
             )
 
             result = await asyncio.wait_for(
@@ -125,23 +122,16 @@ class _QueryAnalyzer:
             )
 
             skip_rag = result.get("skip_rag", False)
-            needs_decomposition = result.get("needs_decomposition", False)
-            sub_queries = result.get("sub_queries", [])[: self._max_sub_queries]
+            expanded_query = result.get("expanded_query", message)
             reasoning = result.get("reasoning", "")
 
-            sub_queries = [
-                sq.strip()[:500]
-                for sq in sub_queries
-                if isinstance(sq, str) and sq.strip()
-            ]
-
-            if needs_decomposition and not sub_queries:
-                needs_decomposition = False
+            # Validate expanded_query
+            if not expanded_query or not expanded_query.strip():
+                expanded_query = message
 
             return QueryAnalysisResult(
                 skip_rag=skip_rag,
-                needs_decomposition=needs_decomposition,
-                sub_queries=sub_queries,
+                expanded_query=expanded_query.strip(),
                 reasoning=reasoning,
             )
 
@@ -149,8 +139,7 @@ class _QueryAnalyzer:
             logger.warning("Query analysis timed out: %s", e)
             return QueryAnalysisResult(
                 skip_rag=False,
-                needs_decomposition=False,
-                sub_queries=[],
+                expanded_query=message,  # Fallback to original
                 reasoning="Analysis timed out",
             )
 
@@ -158,8 +147,7 @@ class _QueryAnalyzer:
             logger.warning("Query analysis failed: %s", e)
             return QueryAnalysisResult(
                 skip_rag=False,
-                needs_decomposition=False,
-                sub_queries=[],
+                expanded_query=message,  # Fallback to original
                 reasoning=f"Analysis error: {e}",
             )
 
@@ -170,6 +158,7 @@ class _QueryAnalyzer:
 async def _stream_general_response(
     message: str,
     chat_history: str,
+    expanded_query: str | None = None,
 ) -> AsyncGenerator[dict[str, Any], None]:
     """Stream a general (non-RAG) response."""
     llm = LLMService()
@@ -179,7 +168,13 @@ async def _stream_general_response(
     history_section = (
         f"CONVERSATION HISTORY:\n{chat_history}\n\n" if chat_history else ""
     )
-    prompt = f"{history_section}User message: {message}"
+
+    # If expanded_query differs from message, show the interpretation
+    interpretation = ""
+    if expanded_query and expanded_query.strip().lower() != message.strip().lower():
+        interpretation = f"\nINTERPRETED AS: {expanded_query}\n"
+
+    prompt = f"{history_section}User message: {message}{interpretation}"
 
     answer_parts: list[str] = []
     async for chunk in llm.stream(prompt, ASSISTANT_SYSTEM_PROMPT, temperature=0.7):
@@ -192,26 +187,25 @@ async def _stream_general_response(
 
 async def _stream_rag_response(
     message: str,
+    expanded_query: str,
     session_id: str,
     chat_history: str,
     doc_ids: list[str],
-    sub_queries: list[str] | None,
     rag_service: RAGService,
 ) -> AsyncGenerator[dict[str, Any], None]:
     """Stream a RAG response.
 
-    1. Retrieve relevant chunks
+    1. Retrieve relevant chunks using expanded_query
     2. Stream sources
-    3. Stream LLM response
+    3. Stream LLM response using original message
     """
     llm = LLMService()
 
-    # 1. Retrieve context
+    # 1. Retrieve context using optimized search query
     retrieval = await rag_service.retrieve(
-        message=message,
+        expanded_query=expanded_query,
         session_id=session_id,
         doc_ids=doc_ids,
-        sub_queries=sub_queries,
     )
 
     # 2. No relevant content found
@@ -227,8 +221,10 @@ async def _stream_rag_response(
     # 3. Yield sources first (for UI)
     yield {"type": "sources", "sources": retrieval.sources}
 
-    # 4. Build prompt and stream LLM response
-    prompt = rag_service.build_rag_prompt(message, retrieval.context, chat_history)
+    # 4. Build prompt using ORIGINAL message but include interpretation if rewritten
+    prompt = rag_service.build_rag_prompt(
+        message, retrieval.context, chat_history, expanded_query
+    )
 
     answer_parts: list[str] = []
     async for chunk in llm.stream(prompt, DOCUMENT_QA_SYSTEM_PROMPT):
@@ -282,8 +278,7 @@ async def stream_response(
     if is_simple_greeting:
         analysis = QueryAnalysisResult(
             skip_rag=True,
-            needs_decomposition=False,
-            sub_queries=[],
+            expanded_query=request.message,
             reasoning="Simple greeting (fast path)",
         )
         logger.debug("[%s] Fast path: greeting detected, skipping analysis", request_id)
@@ -291,19 +286,12 @@ async def stream_response(
         analyzer = _QueryAnalyzer()
         analysis = await analyzer.analyze(request.message, chat_history, doc_names)
         logger.info(
-            "[%s] Query Analysis: skip_rag=%s, decompose=%s, reasoning=%s",
+            "[%s] Query Analysis: skip_rag=%s, expanded_query='%s', reasoning=%s",
             request_id,
             analysis.skip_rag,
-            analysis.needs_decomposition,
+            analysis.expanded_query[:100],
             analysis.reasoning,
         )
-        if analysis.needs_decomposition and analysis.sub_queries:
-            logger.info(
-                "[%s] Decomposed into %d sub-queries: %s",
-                request_id,
-                len(analysis.sub_queries),
-                analysis.sub_queries,
-            )
 
     # --- SSE Generator ---
     async def generate_sse_events():
@@ -314,7 +302,7 @@ async def stream_response(
             if analysis.skip_rag:
                 # General response (no RAG)
                 async for chunk in _stream_general_response(
-                    request.message, chat_history
+                    request.message, chat_history, analysis.expanded_query
                 ):
                     if chunk.get("type") == "done":
                         full_answer = chunk.get("full_answer", "")
@@ -330,15 +318,13 @@ async def stream_response(
                 full_answer = no_docs_msg
 
             else:
-                # RAG response: retrieve context, then stream LLM
+                # RAG response: retrieve with expanded_query, generate with original message
                 async for chunk in _stream_rag_response(
                     message=request.message,
+                    expanded_query=analysis.expanded_query,
                     session_id=session_id,
                     chat_history=chat_history,
                     doc_ids=request.doc_ids or doc_ids,
-                    sub_queries=analysis.sub_queries
-                    if analysis.needs_decomposition
-                    else None,
                     rag_service=rag_service,
                 ):
                     if chunk.get("type") == "done":

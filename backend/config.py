@@ -89,13 +89,7 @@ class Settings(BaseSettings):
     )
     llm_max_tokens: int = Field(default=2048, description="Max tokens for generation")
 
-    # Query Decomposition Settings
-    max_sub_queries: int = Field(
-        default=6, description="Max sub-queries for query decomposition"
-    )
-    decomposition_top_k: int = Field(
-        default=6, description="Chunks to retrieve per sub-query"
-    )
+    # Query Analysis Settings
     query_analysis_timeout: float = Field(
         default=10.0, description="Timeout for query analysis LLM call in seconds"
     )

@@ -1,6 +1,6 @@
 # ContextQ
 
-> **Production-Grade Document Q&A with Intelligent RAG** — A sophisticated retrieval-augmented generation system featuring query decomposition, streaming responses, and transparent source attribution. Built for performance, scalability, and reliability.
+> **Production-Grade Document Q&A with Intelligent RAG** — A sophisticated retrieval-augmented generation system featuring smart query expansion, streaming responses, and transparent source attribution. Built for performance, scalability, and reliability.
 
 ![Python](https://img.shields.io/badge/Python-3.11+-blue?style=flat-square&logo=python)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-green?style=flat-square&logo=fastapi)
@@ -17,22 +17,26 @@ ContextQ isn't just another RAG demo — it's a **production-ready**, **enterpri
 ### 🎯 Intelligent Query Routing
 - **Automatic query analysis** — Distinguishes greetings, meta-questions, and document queries
 - **Fast-path optimization** — Skip LLM analysis for simple queries
-- **Query decomposition for multi-document questions** — "Compare these 3 docs" automatically becomes 3 targeted sub-queries
-- **Document-aware sub-queries** — System knows actual filenames and references them precisely
+- **Query expansion for context-dependent questions** — Follow-ups like "now?" automatically expand to full queries
+- **Document-aware queries** — System knows actual filenames and references them precisely
 
 ### 🚀 Production-Grade Architecture
 - **Clean Architecture** — Feature modules, dependency injection, standardized responses
+- **Dockerized deployment** — Multi-stage build for optimized container images
+- **Pre-commit hooks** — Automated linting (Ruff) and testing before every commit
 - **Request tracing** — Every request gets a unique ID tracked across all logs
 - **Graceful degradation** — Chat works even if persistence fails
 - **LRU-cached singletons** — Prevents memory leaks from repeated dependency instantiation
 - **Rate limiting** — Per-minute and per-hour limits protect against cost overruns
 - **Health checks** — Qdrant and Firestore connectivity monitoring
+- **Lifespan management** — Proper async resource initialization and cleanup
 
 ### 💡 Sophisticated RAG Pipeline
 - **Dynamic relevance thresholding** — Configurable similarity scores filter low-quality matches
 - **Session-based document scoping** — Isolates documents per browser session
 - **Filename-aware embeddings** — Queries like "show me turnus.pdf" actually work
-- **Chunk deduplication in multi-query retrieval** — Prevents redundant context
+- **Embedding cache** — In-memory LRU cache reduces API calls and costs
+- **Chunk deduplication** — Prevents redundant context in retrieval
 - **Source transparency** — Every answer includes  passages with relevance scores
 
 ### 🎨 Premium User Experience
@@ -45,6 +49,8 @@ ContextQ isn't just another RAG demo — it's a **production-ready**, **enterpri
 
 ### 📊 Enterprise-Ready Features
 - **Duplicate detection** — SHA-256 content hashing prevents re-processing
+- **Path traversal protection** — Filename sanitization prevents directory escape attacks
+- **Prompt injection protection** — System prompts ignore malicious instructions in document content
 - **Table extraction** — DOCX tables preserved correctly
 - **Async/await throughout** — Non-blocking I/O for scalability
 - **Structured logging** — Production-ready observability
@@ -80,7 +86,7 @@ Run the entire stack for **free** during development:
 │  │  • Drag-drop       │        │  │  Query Router (Intelligent)     │  │   │
 │  │    upload          │        │  ├─────────────────────────────────┤  │   │
 │  │  • Streaming       │        │  │  • Fast-path for greetings      │  │   │
-│  │    chat UI         │        │  │  • Query decomposition          │  │   │
+│  │    chat UI         │        │  │  • Query expansion             │  │   │
 │  │  • Source cards    │        │  │  • Document context injection   │  │   │
 │  │  • Progress        │        │  └─────────────────────────────────┘  │   │
 │  │    tracking        │        │                                       │   │
@@ -124,7 +130,7 @@ Run the entire stack for **free** during development:
        │
        ▼
 2. Query Analysis (Claude)
-   → skip_rag=false, needs_decomposition=false
+   → skip_rag=false, expanded_query="What are the main risks in the report?"
        │
        ▼
 3. Fetch Session Documents
@@ -178,13 +184,11 @@ Run the entire stack for **free** during development:
 # Single Document Query (2s)
 "summarize this doc" → LLM analysis → RAG pipeline
 
-# Multi-Document Query (4s)
+# Multi-Document Query (3s)
 "compare resume.pdf and job description.pdf"
   → LLM analysis 
-  → needs_decomposition=true
-  → ["content of resume.pdf", "content of job description.pdf"]
-  → Parallel retrieval
-  → Unified generation
+  → expanded_query="Comparison of content between resume.pdf and job description.pdf"
+  → RAG pipeline
 ```
 
 ### Streaming Response System
@@ -341,6 +345,7 @@ backend/
 │   │   │   ├── stream_response.py    # SSE streaming, query routing
 │   │   │   └── get_chat_history.py   # Conversation history
 │   │   ├── chat_history.py           # Persistence manager
+│   │   ├── session_helpers.py         # Cookie management
 │   │   └── routes.py
 │   │
 │   ├── documents/
@@ -348,13 +353,6 @@ backend/
 │   │   │   ├── upload_document.py    # Parse, chunk, embed, store
 │   │   │   ├── list_documents.py     # Session-scoped listing
 │   │   │   └── delete_document.py    # Qdrant + metadata cleanup
-│   │   └── routes.py
-│   │
-│   ├── sessions/
-│   │   ├── handlers/
-│   │   │   ├── create_session.py     # New chat creation
-│   │   │   └── list_sessions.py      # Chat listing
-│   │   ├── helpers.py                # Cookie management
 │   │   └── routes.py
 │   │
 │   └── health/
@@ -372,7 +370,7 @@ backend/
 │   └── prompts/                 # Engineered system prompts
 │       ├── assistant.py         # General assistant capabilities
 │       ├── document_qa.py       # RAG-specific instructions
-│       └── query_analysis.py    # Query routing (skip_rag, decomposition)
+│       └── query_analysis.py    # Query routing (skip_rag, expansion)
 │
 ├── middleware/
 │   └── rate_limit.py            # Sliding window rate limiter

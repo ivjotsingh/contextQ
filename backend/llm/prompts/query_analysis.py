@@ -1,4 +1,4 @@
-"""Prompt and schema for query analysis and decomposition."""
+"""Prompt and schema for query analysis with query expansion."""
 
 from pydantic import BaseModel, Field
 
@@ -7,24 +7,23 @@ class QueryAnalysisResult(BaseModel):
     """Structured output for query analysis."""
 
     skip_rag: bool = Field(
-        description="True if question doesn't need document lookup (greetings, meta questions)"
+        description="True if question doesn't need document lookup (greetings, meta questions about assistant)"
     )
-    needs_decomposition: bool = Field(
-        description="True if question requires multiple document queries (comparison, cross-reference)"
+    expanded_query: str = Field(
+        description="Self-contained query with context expanded. Used for vector search and LLM context."
     )
     reasoning: str = Field(description="Brief explanation of the decision")
-    sub_queries: list[str] = Field(
-        default_factory=list,
-        description="Sub-queries if decomposition is needed, empty otherwise",
-    )
 
 
 # System prompt for the query analyzer
 QUERY_ANALYSIS_SYSTEM_PROMPT = """You are a query analyzer for a document Q&A system.
-Analyze user queries to determine if they need document lookup and if they span multiple documents."""
+Your job is to:
+1. Determine if a question needs document lookup (skip_rag)
+2. If needed, expand context-dependent questions into self-contained queries
+
+The expanded query is used for both vector similarity search and LLM context."""
 
 # User prompt template for query analysis
-# Placeholders: {question}, {chat_history}, {max_sub_queries}
 QUERY_ANALYSIS_PROMPT = """Analyze this user question for a document Q&A system.
 
 User question: {question}
@@ -32,6 +31,7 @@ User question: {question}
 {chat_history_section}
 
 Determine:
+
 1. skip_rag (true/false)
    Set skip_rag=true ONLY for:
    - Simple greetings: "hi", "hello", "thanks"
@@ -40,17 +40,28 @@ Determine:
    Set skip_rag=false for EVERYTHING ELSE, including:
    - Any question about documents or their content
    - Any question that might be answered using uploaded documents
-   - Questions about "how many", "what", "summarize", etc.
+   - Follow-up questions like "now?", "what about that?", "more details"
    
    When in doubt, set skip_rag=false.
 
-2. needs_decomposition (true/false)
-   Set true if the question spans MULTIPLE documents:
-   - Comparisons: "compare", "difference", "vs"
-   - Synthesis: "combine", "all documents", "both"
-   - Cross-reference: mentions multiple document names
+2. expanded_query (string)
+   Create a self-contained query by expanding any context-dependent references.
    
-   If true, generate up to {max_sub_queries} sub-queries targeting specific documents."""
+   IMPORTANT: The expanded_query must be self-contained - it should NOT rely on conversation context.
+   
+   Rules:
+   - If the question is context-dependent (pronouns, references, follow-ups), EXPAND it to be self-contained
+   - Use conversation context to resolve vague references
+   - Keep it concise but complete (aim for 10-50 words)
+   - If the question is already clear and self-contained, keep it as is
+   
+   Examples:
+   - "now?" after discussing document count → "How many documents are currently uploaded?"
+   - "what about that?" after discussing pricing → "What is the pricing information?"
+   - "compare A and B" → "Comparison of pricing, features, and differences between A and B"
+   - "tell me about the resume" → Keep as is (already clear)
+   - "what are his skills?" → "What are the skills and qualifications listed in the resume?"
+   - "thanks for that!" → "Thank you for that information" (expanded for context)"""
 
 
 # JSON schema for structured output via tool_use (generated from Pydantic model)
