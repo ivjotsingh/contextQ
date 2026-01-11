@@ -3,8 +3,8 @@
 Orchestrates the chat flow:
 1. Get chat history context
 2. Analyze query (skip RAG? decompose?)
-3. Route to RAG or general response
-4. Stream response
+3. Retrieve relevant context (RAGService)
+4. Stream LLM response
 5. Save to chat history
 """
 
@@ -26,6 +26,7 @@ from dependencies import get_chat_history_manager, get_rag_service
 from llm import LLMService
 from llm.prompts import (
     ASSISTANT_SYSTEM_PROMPT,
+    DOCUMENT_QA_SYSTEM_PROMPT,
     QUERY_ANALYSIS_PROMPT,
     QUERY_ANALYSIS_SCHEMA,
     QUERY_ANALYSIS_SYSTEM_PROMPT,
@@ -62,9 +63,6 @@ class ChatRequest(BaseModel):
 # --- Query Analyzer (private to this handler) ---
 
 
-# Use QueryAnalysisResult from llm.prompts (Pydantic model)
-
-
 class _QueryAnalyzer:
     """Analyzes queries to determine routing (RAG vs general)."""
 
@@ -81,12 +79,7 @@ class _QueryAnalyzer:
         chat_history: str = "",
         document_names: list[str] | None = None,
     ) -> QueryAnalysisResult:
-        """Analyze query to determine routing.
-
-        Uses the query text and chat history to decide:
-        1. skip_rag - Is this a greeting/meta question?
-        2. needs_decomposition - Does this compare multiple docs?
-        """
+        """Analyze query to determine routing."""
         # Fast path: very short = likely greeting
         words = message.split()
         if len(words) <= 2:
@@ -99,7 +92,7 @@ class _QueryAnalyzer:
                     reasoning="Greeting detected",
                 )
 
-        # Use LLM for analysis (with chat history context)
+        # Use LLM for analysis
         try:
             chat_history_section = (
                 f"Recent chat history:\n{chat_history}"
@@ -107,7 +100,6 @@ class _QueryAnalyzer:
                 else "No prior chat history."
             )
 
-            # Include document names for better sub-query generation
             docs_section = ""
             if document_names:
                 docs_list = "\n".join(f"- {name}" for name in document_names)
@@ -137,7 +129,6 @@ class _QueryAnalyzer:
             sub_queries = result.get("sub_queries", [])[: self._max_sub_queries]
             reasoning = result.get("reasoning", "")
 
-            # Validate sub-queries
             sub_queries = [
                 sq.strip()[:500]
                 for sq in sub_queries
@@ -173,7 +164,7 @@ class _QueryAnalyzer:
             )
 
 
-# --- General Response Generator ---
+# --- Response Generators ---
 
 
 async def _stream_general_response(
@@ -199,6 +190,55 @@ async def _stream_general_response(
     yield {"type": "done", "full_answer": full_answer, "sources": []}
 
 
+async def _stream_rag_response(
+    message: str,
+    session_id: str,
+    chat_history: str,
+    doc_ids: list[str],
+    sub_queries: list[str] | None,
+    rag_service: RAGService,
+) -> AsyncGenerator[dict[str, Any], None]:
+    """Stream a RAG response.
+
+    1. Retrieve relevant chunks
+    2. Stream sources
+    3. Stream LLM response
+    """
+    llm = LLMService()
+
+    # 1. Retrieve context
+    retrieval = await rag_service.retrieve(
+        message=message,
+        session_id=session_id,
+        doc_ids=doc_ids,
+        sub_queries=sub_queries,
+    )
+
+    # 2. No relevant content found
+    if not retrieval.has_relevant_content:
+        yield {"type": "sources", "sources": []}
+        no_content_msg = (
+            "I couldn't find any relevant information in the uploaded documents."
+        )
+        yield {"type": "content", "content": no_content_msg}
+        yield {"type": "done", "full_answer": no_content_msg, "sources": []}
+        return
+
+    # 3. Yield sources first (for UI)
+    yield {"type": "sources", "sources": retrieval.sources}
+
+    # 4. Build prompt and stream LLM response
+    prompt = rag_service.build_rag_prompt(message, retrieval.context, chat_history)
+
+    answer_parts: list[str] = []
+    async for chunk in llm.stream(prompt, DOCUMENT_QA_SYSTEM_PROMPT):
+        answer_parts.append(chunk)
+        yield {"type": "content", "content": chunk}
+
+    full_answer = "".join(answer_parts)
+    yield {"type": "done", "full_answer": full_answer, "sources": retrieval.sources}
+
+
 # --- Handler ---
 
 
@@ -210,14 +250,10 @@ async def stream_response(
 ) -> StreamingResponse:
     """Stream a chat response.
 
-    Args:
-        request: Chat request with message and chat_id
-        session_id: Browser identifier (cookie) for document access
-
     Orchestrates:
     1. Prepare context and analyze query
     2. Route to appropriate response generator
-    3. Stream response
+    3. Stream response (LLM generation happens here)
     4. Save to chat history
     """
     if not session_id:
@@ -244,7 +280,6 @@ async def stream_response(
     )
 
     if is_simple_greeting:
-        # No LLM call needed - go straight to response
         analysis = QueryAnalysisResult(
             skip_rag=True,
             needs_decomposition=False,
@@ -253,7 +288,6 @@ async def stream_response(
         )
         logger.debug("[%s] Fast path: greeting detected, skipping analysis", request_id)
     else:
-        # Full LLM analysis for complex queries
         analyzer = _QueryAnalyzer()
         analysis = await analyzer.analyze(request.message, chat_history, doc_names)
         logger.info(
@@ -265,22 +299,17 @@ async def stream_response(
         )
         if analysis.needs_decomposition and analysis.sub_queries:
             logger.info(
-                "[%s] Original query: %s",
-                request_id,
-                request.message[:200],
-            )
-            logger.info(
                 "[%s] Decomposed into %d sub-queries: %s",
                 request_id,
                 len(analysis.sub_queries),
                 analysis.sub_queries,
             )
 
-    # --- SSE Generator (streaming only) ---
+    # --- SSE Generator ---
     async def generate_sse_events():
         try:
             full_answer = ""
-            sources = []
+            sources: list[dict[str, Any]] = []
 
             if analysis.skip_rag:
                 # General response (no RAG)
@@ -301,8 +330,8 @@ async def stream_response(
                 full_answer = no_docs_msg
 
             else:
-                # RAG response
-                async for chunk in rag_service.retrieve_and_generate(
+                # RAG response: retrieve context, then stream LLM
+                async for chunk in _stream_rag_response(
                     message=request.message,
                     session_id=session_id,
                     chat_history=chat_history,
@@ -310,6 +339,7 @@ async def stream_response(
                     sub_queries=analysis.sub_queries
                     if analysis.needs_decomposition
                     else None,
+                    rag_service=rag_service,
                 ):
                     if chunk.get("type") == "done":
                         full_answer = chunk.get("full_answer", "")

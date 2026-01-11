@@ -10,7 +10,7 @@ from fastapi import Cookie, Depends, File, UploadFile
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from apps.sessions.helpers import set_session_cookie
+from apps.chat.session_helpers import set_session_cookie
 from dependencies import (
     get_chunker,
     get_embedding_service,

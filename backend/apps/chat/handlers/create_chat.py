@@ -6,7 +6,7 @@ import uuid
 from fastapi import Cookie
 from fastapi.responses import JSONResponse
 
-from apps.sessions.helpers import set_session_cookie
+from apps.chat.session_helpers import set_session_cookie
 from db import get_firestore_service
 from responses import ResponseCode, error_response, success_dict
 

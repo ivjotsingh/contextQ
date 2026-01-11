@@ -83,7 +83,7 @@ class Settings(BaseSettings):
     llm_model: str = Field(
         default="claude-sonnet-4-20250514", description="Claude model for generation"
     )
-    retrieval_top_k: int = Field(default=5, description="Number of chunks to retrieve")
+    retrieval_top_k: int = Field(default=10, description="Number of chunks to retrieve")
     llm_temperature: float = Field(
         default=0.2, description="LLM temperature for factual responses"
     )
@@ -94,7 +94,7 @@ class Settings(BaseSettings):
         default=6, description="Max sub-queries for query decomposition"
     )
     decomposition_top_k: int = Field(
-        default=4, description="Chunks to retrieve per sub-query"
+        default=6, description="Chunks to retrieve per sub-query"
     )
     query_analysis_timeout: float = Field(
         default=10.0, description="Timeout for query analysis LLM call in seconds"
@@ -128,7 +128,7 @@ class Settings(BaseSettings):
 
     # Session Settings
     session_ttl_hours: int = Field(
-        default=24, description="Session cookie TTL in hours"
+        default=87600, description="Session cookie TTL in hours (87600 = 10 years)"
     )
 
     # Embedding Batch Settings

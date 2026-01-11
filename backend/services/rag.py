@@ -1,45 +1,49 @@
 """RAG (Retrieval-Augmented Generation) service.
 
-Pure RAG service that handles:
+Pure retrieval service that handles:
 1. Embed user question
 2. Retrieve relevant chunks from vector store
-3. Generate answer with LLM (streaming)
+3. Filter and build context
 
 This service does NOT handle:
+- LLM generation (handled by caller/handler)
 - Query analysis (handled by caller)
 - Chat history persistence (handled by caller)
-- Routing decisions (handled by caller)
 """
 
 import logging
-from collections.abc import AsyncGenerator
+from dataclasses import dataclass
 from typing import Any
 
 from config import get_settings
-from llm import LLMError, LLMService
-from llm.prompts import DOCUMENT_QA_SYSTEM_PROMPT
 from services.embeddings import EmbeddingService
 from services.vector_store import RetrievedChunk, VectorStoreService
 
 logger = logging.getLogger(__name__)
 
 
-__all__ = ["RAGService", "RAGError", "LLMError"]
+__all__ = ["RAGService", "RetrievalResult"]
 
 
-class RAGError(Exception):
-    """Raised when RAG pipeline fails."""
+@dataclass
+class RetrievalResult:
+    """Result of retrieval operation."""
 
-    pass
+    chunks: list[RetrievedChunk]
+    context: str
+    sources: list[dict[str, Any]]
+    has_relevant_content: bool
 
 
 class RAGService:
-    """Pure RAG service for retrieval and generation.
+    """Pure retrieval service for RAG pipeline.
 
-    Use retrieve_and_generate() to:
+    Use retrieve() to:
     1. Embed the question
     2. Search for relevant chunks
-    3. Stream LLM response with context
+    3. Filter and build context
+
+    LLM generation is handled separately by the caller.
     """
 
     def __init__(
@@ -51,31 +55,28 @@ class RAGService:
         self.settings = get_settings()
         self.embedding_service = embedding_service
         self.vector_store = vector_store
-        self._llm = LLMService()
 
     async def get_session_documents(self, session_id: str):
         """Get documents for a session (passthrough to vector store)."""
         return await self.vector_store.get_session_documents(session_id)
 
-    async def retrieve_and_generate(
+    async def retrieve(
         self,
         message: str,
         session_id: str,
-        chat_history: str = "",
         doc_ids: list[str] | None = None,
         sub_queries: list[str] | None = None,
-    ) -> AsyncGenerator[dict[str, Any], None]:
-        """Retrieve relevant chunks and stream LLM response.
+    ) -> RetrievalResult:
+        """Retrieve relevant chunks for a question.
 
         Args:
             message: User's question.
             session_id: Session identifier.
-            chat_history: Formatted chat history context.
             doc_ids: Document IDs to search.
             sub_queries: Optional sub-queries for decomposition.
 
-        Yields:
-            Stream chunks: 'sources', 'content', 'done'.
+        Returns:
+            RetrievalResult with chunks, context, sources, and relevance flag.
         """
         if not message or not message.strip():
             raise ValueError("Message cannot be empty")
@@ -84,70 +85,70 @@ class RAGService:
 
         message = message.strip()
 
-        try:
-            # 1. Retrieve chunks
-            chunks = await self._retrieve_chunks(
-                message, session_id, doc_ids or [], sub_queries
+        # 1. Retrieve chunks
+        chunks = await self._retrieve_chunks(
+            message, session_id, doc_ids or [], sub_queries
+        )
+
+        # 2. No chunks found
+        if not chunks:
+            return RetrievalResult(
+                chunks=[],
+                context="",
+                sources=[],
+                has_relevant_content=False,
             )
 
-            # 2. Filter by relevance
-            if not chunks:
-                yield {
-                    "type": "sources",
-                    "sources": [],
-                }
-                yield {
-                    "type": "content",
-                    "content": "I couldn't find any relevant information in the uploaded documents.",
-                }
-                yield {
-                    "type": "done",
-                    "full_answer": "I couldn't find any relevant information.",
-                    "sources": [],
-                }
-                return
+        # 3. Filter by relevance
+        min_score = self.settings.min_relevance_score
+        relevant_chunks = [c for c in chunks if c.score >= min_score]
 
-            min_score = self.settings.min_relevance_score
-            relevant_chunks = [c for c in chunks if c.score >= min_score]
+        self._log_retrieval_metrics(chunks, relevant_chunks, min_score)
 
-            self._log_retrieval_metrics(chunks, relevant_chunks, min_score)
+        if not relevant_chunks:
+            return RetrievalResult(
+                chunks=[],
+                context="",
+                sources=[],
+                has_relevant_content=False,
+            )
 
-            if not relevant_chunks:
-                yield {"type": "sources", "sources": []}
-                yield {
-                    "type": "content",
-                    "content": "I couldn't find any relevant information in the uploaded documents for your question.",
-                }
-                yield {
-                    "type": "done",
-                    "full_answer": "No relevant information found.",
-                    "sources": [],
-                }
-                return
+        # 4. Build context and sources
+        context = self._build_context(relevant_chunks)
+        sources = self._chunks_to_source_dicts(relevant_chunks)
 
-            # 3. Build context and sources
-            context = self._build_context(relevant_chunks)
-            sources = self._chunks_to_source_dicts(relevant_chunks)
+        return RetrievalResult(
+            chunks=relevant_chunks,
+            context=context,
+            sources=sources,
+            has_relevant_content=True,
+        )
 
-            # 4. Yield sources
-            yield {"type": "sources", "sources": sources}
+    def build_rag_prompt(
+        self,
+        message: str,
+        context: str,
+        chat_history: str = "",
+    ) -> str:
+        """Build RAG prompt for LLM.
 
-            # 5. Stream LLM response
-            prompt = self._build_prompt(message, context, chat_history)
-            answer_parts: list[str] = []
+        Args:
+            message: User's question.
+            context: Document context from retrieval.
+            chat_history: Formatted chat history.
 
-            async for text_chunk in self._llm.stream(prompt, DOCUMENT_QA_SYSTEM_PROMPT):
-                answer_parts.append(text_chunk)
-                yield {"type": "content", "content": text_chunk}
+        Returns:
+            Complete prompt for LLM.
+        """
+        history = f"CONVERSATION HISTORY:\n{chat_history}\n\n" if chat_history else ""
+        return f"""{history}Based on the following document excerpts, please answer the question.
 
-            full_answer = "".join(answer_parts)
-            yield {"type": "done", "full_answer": full_answer, "sources": sources}
+DOCUMENT CONTEXT:
+{context}
 
-        except (ValueError, RAGError, LLMError):
-            raise
-        except Exception as e:
-            logger.error("RAG pipeline failed: %s", e)
-            raise RAGError(f"RAG pipeline failed: {e}") from e
+QUESTION: {message}
+
+Please provide a clear, accurate answer based only on the information in the documents above."""
 
     async def _retrieve_chunks(
         self,
@@ -239,23 +240,6 @@ class RAGService:
             source += "]"
             parts.append(f"{source}\n{chunk.text}")
         return "\n\n---\n\n".join(parts)
-
-    def _build_prompt(
-        self,
-        message: str,
-        context: str,
-        chat_history: str = "",
-    ) -> str:
-        """Build RAG prompt."""
-        history = f"CONVERSATION HISTORY:\n{chat_history}\n\n" if chat_history else ""
-        return f"""{history}Based on the following document excerpts, please answer the question.
-
-DOCUMENT CONTEXT:
-{context}
-
-QUESTION: {message}
-
-Please provide a clear, accurate answer based only on the information in the documents above."""
 
     def _chunks_to_source_dicts(
         self,

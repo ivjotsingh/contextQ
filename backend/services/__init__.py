@@ -20,7 +20,7 @@ from services.document import (
     UnsupportedFileTypeError,
 )
 from services.embeddings import EmbeddingError, EmbeddingService
-from services.rag import RAGError, RAGService
+from services.rag import RAGService, RetrievalResult
 from services.vector_store import (
     DocumentInfo,
     RetrievedChunk,
@@ -32,8 +32,8 @@ __all__ = [
     # Core services
     "EmbeddingError",
     "EmbeddingService",
-    "RAGError",
     "RAGService",
+    "RetrievalResult",
     "VectorStoreError",
     "VectorStoreService",
     # Document services
